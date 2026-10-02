@@ -177,7 +177,7 @@ const ESQUEMAS = {
       formato: { enum: ['JSON', 'CSV'] },
       fecha_generacion: FECHA,
       estado: { enum: ['PENDIENTE', 'GENERADO', 'ERROR'] },
-      resultado: { bsonType: ['array', 'string', 'null'] }
+      resultado: { bsonType: ['array', 'null'] }
     }
   },
 

@@ -43,6 +43,12 @@ def _rango(campo: str, desde: datetime | None, hasta: datetime | None) -> dict:
     return {campo: condicion} if condicion else {}
 
 
+def _nombrar_grupo(agrupacion: str) -> list[dict]:
+    if agrupacion == "cliente":
+        return [{"$set": {"cliente_id": "$_id"}}]
+    return [{"$set": {agrupacion: "$_id"}}, {"$unset": "cliente"}]
+
+
 def _filtro_envios(desde: datetime | None, hasta: datetime | None, cliente_id: int | None,
                    campo_fecha: str = "fecha_creacion") -> dict:
     filtro = _rango(campo_fecha, desde, hasta)
@@ -309,15 +315,12 @@ class RepositorioDocumental:
         self._db.reportes.update_one({"_id": reporte_id}, {"$set": {"estado": estado, "resultado": resultado}})
 
     def envios_agrupados(self, agrupacion: str, desde, hasta, cliente_id) -> list[dict]:
-        grupo = {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "cantidad": {"$sum": 1}}
-        if agrupacion == "cliente":
-            grupo["razon_social"] = {"$first": "$cliente.razon_social"}
         return list(self._db.envios.aggregate([
             {"$match": _filtro_envios(desde, hasta, cliente_id)},
-            {"$group": grupo},
-            {"$set": {agrupacion: "$_id"}},
-            {"$unset": "_id"},
-            {"$sort": {"cantidad": DESCENDING, agrupacion: ASCENDING}},
+            {"$group": {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "cantidad": {"$sum": 1},
+                        "cliente": {"$first": "$cliente.razon_social"}}},
+            *_nombrar_grupo(agrupacion),
+            {"$sort": {"cantidad": DESCENDING, "_id": ASCENDING}},
         ]))
 
     def envios_demorados(self, ahora: datetime, desde, hasta, cliente_id) -> list[dict]:
@@ -368,10 +371,11 @@ class RepositorioDocumental:
             {"$match": _filtro_envios(desde, hasta, cliente_id)},
             {"$group": {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "envios": {"$sum": 1},
                         "incidentes": {"$sum": "$cantidad_incidentes"},
-                        "promedio": {"$avg": "$cantidad_incidentes"}}},
-            {"$set": {agrupacion: "$_id", "promedio": {"$round": ["$promedio", 2]}}},
-            {"$unset": "_id"},
-            {"$sort": {"promedio": DESCENDING, agrupacion: ASCENDING}},
+                        "promedio": {"$avg": "$cantidad_incidentes"},
+                        "cliente": {"$first": "$cliente.razon_social"}}},
+            {"$set": {"promedio": {"$round": ["$promedio", 2]}}},
+            *_nombrar_grupo(agrupacion),
+            {"$sort": {"promedio": DESCENDING, "_id": ASCENDING}},
         ]))
 
     def costos_por_transporte(self, desde, hasta, cliente_id) -> list[dict]:

@@ -72,7 +72,10 @@ class RepositorioClaveValor:
         fecha_guardada = self._redis.hget(clave, "fecha_hora")
         if fecha_guardada is not None and fecha_guardada >= lectura["fecha_hora"]:
             return False
-        self._redis.hset(clave, mapping=lectura)
+        with self._redis.pipeline(transaction=True) as operaciones:
+            operaciones.delete(clave)
+            operaciones.hset(clave, mapping=lectura)
+            operaciones.execute()
         return True
 
     def ultima_lectura(self, sensor_id: int) -> dict[str, str]:

@@ -223,6 +223,24 @@ class TestPrediccion:
         assert reglas.tasa_demora(0, 0) == 0.0
 
 
+class TestUbicacionYCarga:
+    def test_ubicacion_normalizada(self):
+        assert reglas.crear_ubicacion(" arbue ", "Buenos Aires", "ar") == \
+            {"codigo": "ARBUE", "ciudad": "Buenos Aires", "pais": "AR"}
+
+    @pytest.mark.parametrize("codigo,pais", [("BUE", "AR"), ("ARBUE1", "AR"), ("BRSSZ", "AR")])
+    def test_ubicacion_invalida(self, codigo, pais):
+        with pytest.raises(ErrorNegocio):
+            reglas.crear_ubicacion(codigo, "Ciudad", pais)
+
+    def test_volumen_dentro_de_la_capacidad(self):
+        reglas.validar_carga(1000, 60, [Decimal("33"), Decimal("33")])
+
+    def test_volumen_que_excede_la_capacidad(self):
+        with pytest.raises(ErrorNegocio, match="capacidad"):
+            reglas.validar_carga(1000, 34, [Decimal("33")])
+
+
 def test_password_corta():
     with pytest.raises(ErrorNegocio):
         reglas.validar_password("1234567")

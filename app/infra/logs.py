@@ -24,5 +24,5 @@ def configurar_logs(archivo: Path) -> None:
 
     raiz.addHandler(a_archivo)
     raiz.addHandler(a_consola)
-    for ruidoso in ("neo4j", "pymongo"):
-        logging.getLogger(ruidoso).setLevel(logging.WARNING)
+    logging.getLogger("pymongo").setLevel(logging.WARNING)
+    logging.getLogger("neo4j").setLevel(logging.ERROR)

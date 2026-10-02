@@ -42,6 +42,7 @@ class Config:
     umbral_bateria: float
     minutos_gracia_sensor: int
     log_archivo: Path
+    directorio_salidas: Path
 
 
 def cargar_config() -> Config:
@@ -68,4 +69,5 @@ def cargar_config() -> Config:
         umbral_bateria=float(_leer("UMBRAL_BATERIA")),
         minutos_gracia_sensor=int(_leer("MINUTOS_GRACIA_SENSOR")),
         log_archivo=RAIZ / _leer("LOG_ARCHIVO"),
+        directorio_salidas=RAIZ / _leer("DIRECTORIO_SALIDAS"),
     )

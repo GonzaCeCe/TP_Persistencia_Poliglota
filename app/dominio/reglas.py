@@ -32,6 +32,7 @@ RANGOS_DE_MEDIDAS = {
 }
 MEDIDAS = ("temperatura", "humedad", "vibracion", "lat", "lon", "bateria")
 PATRON_PERIODO = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+PATRON_UBICACION = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}$")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,29 @@ class Anomalia:
     tipo: str
     valor: float
     umbral: float
+
+
+def ahora_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def crear_ubicacion(codigo: str, ciudad: str, pais: str) -> dict:
+    codigo, ciudad, pais = codigo.strip().upper(), ciudad.strip(), pais.strip().upper()
+    if not PATRON_UBICACION.match(codigo):
+        raise ErrorNegocio(f"Código de ubicación inválido: {codigo!r} (UN/LOCODE, por ejemplo ARBUE)")
+    if codigo[:2] != pais:
+        raise ErrorNegocio(f"El código {codigo} no corresponde al país {pais}")
+    if not ciudad:
+        raise ErrorNegocio("Falta la ciudad de la ubicación")
+    return {"codigo": codigo, "ciudad": ciudad, "pais": pais}
+
+
+def validar_carga(peso_kg: float, volumen_m3: float, capacidades_m3: list[Decimal]) -> None:
+    if peso_kg <= 0 or volumen_m3 <= 0:
+        raise ErrorNegocio("El peso y el volumen deben ser mayores a cero")
+    capacidad_total = sum(capacidades_m3, Decimal("0"))
+    if Decimal(str(volumen_m3)) > capacidad_total:
+        raise ErrorNegocio(f"El volumen ({volumen_m3} m3) supera la capacidad de los contenedores ({capacidad_total} m3)")
 
 
 def validar_password(password: str) -> None:

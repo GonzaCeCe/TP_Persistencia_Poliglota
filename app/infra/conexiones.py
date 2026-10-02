@@ -8,6 +8,7 @@ from pymongo.database import Database
 from app.config import Config
 
 TIMEOUT_SEGUNDOS = 5
+REINTENTOS_NEO4J_SEGUNDOS = 0
 
 
 class Conexiones:
@@ -27,6 +28,7 @@ class Conexiones:
             f"bolt://{config.neo4j_host}:{config.neo4j_bolt_port}",
             auth=(config.neo4j_user, config.neo4j_password),
             connection_timeout=TIMEOUT_SEGUNDOS,
+            max_transaction_retry_time=REINTENTOS_NEO4J_SEGUNDOS,
         )
         self._redis = redis.Redis(
             host=config.redis_host,

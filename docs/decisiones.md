@@ -90,3 +90,76 @@ incidentes y la predicción hablan de lo mismo. Los códigos de ubicación sigue
 PostgreSQL, MongoDB y Neo4j. Los scripts se ejecutan con `psql -f`, `mongosh --file` y `cypher-shell -f`
 en lugar de pasarlos por stdin: así un error corta la ejecución con código distinto de cero, la salida es
 limpia y el mismo comando funciona igual en PowerShell y en bash. Los scripts usan solo caracteres ASCII.
+
+## D13. Usuarios, roles y alcance
+
+- El rol CLIENTE va siempre con `cliente_id`, y un usuario con `cliente_id` solo puede tener ese rol. Así
+  la restricción de alcance ("solo ve lo suyo") depende de un único dato de la sesión.
+- El primer usuario se crea con "crear administrador inicial", que solo funciona con la base sin usuarios.
+  Los datos de prueba lo usan para obtener una sesión de ADMIN y cargar todo a través de los servicios.
+- La red de relaciones y el impacto de una ubicación son consultas internas (OPERADOR o más): muestran
+  nombres de otros clientes. Un usuario de cliente sí puede ver la ruta completa de sus propios envíos.
+- El hash de sesión en Redis guarda, además de usuario, nivel, roles y cliente, el nombre del usuario, que
+  usa la consola para saludar sin consultar PostgreSQL en cada pantalla.
+- Un cambio de roles se aplica en el próximo login (la sesión activa conserva el nivel con que se creó).
+
+## D14. Envíos y eventos
+
+- Se agrega **cancelar envío**, solo en estado CREADO (antes de la carga): libera los contenedores. Sin esta
+  operación el estado CANCELADO del enunciado no tendría forma de alcanzarse.
+- El volumen del envío no puede superar la suma de capacidades de sus contenedores.
+- El origen de cada tramo debe ser el destino del tramo anterior (o el origen del envío, si es el
+  primero), y la salida no puede ser anterior a la creación del envío.
+- Un evento solo cambia el estado del envío si es más nuevo que `ultimo_evento`; uno anterior queda en el
+  historial sin modificar el estado. No se aceptan eventos posteriores a la entrega ni la entrega de un
+  envío sin tramos (no tendría costo para facturar).
+- `cantidad_incidentes` cuenta todos los incidentes del envío (abiertos y cerrados): es el dato que usa el
+  reporte de promedio de incidentes. Cerrar un incidente no lo decrementa.
+- El tiempo de envío se mide desde `fecha_creacion` hasta `fecha_entrega_real`, en días con decimales.
+  Todas las fechas se guardan en UTC.
+
+## D15. Lecturas, alertas y sensores
+
+- `registrar_lectura` no recibe sesión: es la puerta de entrada de los dispositivos (y del simulador). La
+  consola exige nivel OPERADOR antes de ofrecer la carga manual.
+- Un sensor en BAJA o FALLA rechaza lecturas; uno sin contenedor asociado también.
+- La alerta SENSOR_INACTIVO se cierra automáticamente cuando el sensor vuelve a reportar. Las demás se
+  cierran manualmente desde el menú.
+- Solo la lectura más reciente actualiza `sensor:{id}:ultima` y la posición GEO: una lectura atrasada
+  queda en el histórico sin pisar el estado en vivo. El heartbeat sí se renueva con cualquier lectura,
+  porque indica que el dispositivo está transmitiendo.
+
+## D16. Facturación, pagos y cierres
+
+- Solo se factura un período terminado, igual que el cierre: así la emisión (primer día del mes siguiente)
+  nunca queda en el futuro.
+- No se registran movimientos en un período que ya tiene cierre mensual (ni facturas ni pagos): el cierre
+  quedaría desactualizado.
+- Convención de saldo: saldo = Σ DEBE − Σ HABER. En la cuenta de un cliente, positivo es deuda del
+  cliente. En la cuenta de un operador, el HABER por el costo de sus tramos deja el saldo negativo: es lo
+  que la empresa le debe al operador.
+- El HABER del operador se registra por envío (suma de los costos de sus tramos en ese envío); el índice
+  único parcial `(cuenta_id, envio_id)` impide registrarlo dos veces.
+- El saldo inicial de un cierre es el saldo final del cierre anterior; si no existe (primer cierre), es
+  la suma de los movimientos previos al período.
+
+## D17. Proyección al grafo
+
+- Toda escritura en MongoDB que cambia algo proyectado (envío nuevo, tramo, estado) pone
+  `grafo_sincronizado = false` **en la misma operación**. Si la proyección posterior funciona, vuelve a
+  `true`. Así, aunque el proceso se corte entre las dos escrituras, el envío queda marcado como pendiente.
+- El driver de Neo4j no reintenta las transacciones (`max_transaction_retry_time = 0`): la proyección
+  ya tiene su mecanismo de recuperación y reintentar dejaba la consola bloqueada hasta 30 segundos.
+- Los hosts se configuran como `127.0.0.1` y no `localhost`: en Windows, `localhost` intenta primero IPv6 y
+  cada conexión rechazada suma segundos de espera.
+
+## D18. Comunicación
+
+Un grupo público lo puede leer cualquier usuario; para escribir hay que unirse. Un grupo privado solo lo
+leen y escriben sus integrantes.
+
+## D19. Procesos que corren al final de los datos de prueba
+
+La detección de sensores inactivos y la predicción diaria se ejecutan con la fecha real (son procesos "de
+hoy"). Por eso esas dos salidas quedan fuera del rango 2026-01-01 a 2026-09-30 que respetan los datos
+cargados.

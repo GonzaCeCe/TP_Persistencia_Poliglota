@@ -162,4 +162,10 @@ leen y escriben sus integrantes.
 
 La detección de sensores inactivos y la predicción diaria se ejecutan con la fecha real (son procesos "de
 hoy"). Por eso esas dos salidas quedan fuera del rango 2026-01-01 a 2026-09-30 que respetan los datos
-cargados.
+cargados. Lo mismo ocurre con las sesiones: el login del administrador que hace la carga es real.
+
+## D20. Recarga de los datos de prueba
+
+`python -m app.datos_prueba` se niega a correr si ya hay usuarios y muestra cómo recrear las bases
+(`docker compose down -v`, `up -d`, `inicializar`, `datos_prueba`). Se prefirió eso a un borrado desde la
+aplicación: no existe ningún camino de código que vacíe las bases, y los IDs vuelven a empezar en 1.

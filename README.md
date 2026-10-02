@@ -32,6 +32,18 @@ pip install -r requirements.txt
 docker compose up -d
 ```
 
+## Datos de prueba y usuarios
+
+```
+python -m app.datos_prueba
+```
+
+| Rol | Email | Contraseña |
+|---|---|---|
+| ADMIN | admin@logistica.com | admin1234 |
+| OPERADOR | operador@logistica.com | operador123 |
+| CLIENTE (Frigorífico Pampa) | compras@frigorificopampa.com.ar | cliente123 |
+
 ## Inicializar las bases
 
 ```

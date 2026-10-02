@@ -56,10 +56,11 @@ class ServicioAuth:
     def hay_usuarios(self) -> bool:
         return bool(self._rel.listar_usuarios())
 
-    def crear_administrador_inicial(self, nombre: str, apellido: str, email: str, password: str) -> int:
+    def crear_administrador_inicial(self, nombre: str, apellido: str, email: str, password: str,
+                                    fecha_registro: datetime | None = None) -> int:
         if self.hay_usuarios():
             raise ErrorNegocio("El administrador inicial solo se crea cuando no hay usuarios")
-        return self._crear_usuario(None, nombre, apellido, email, password, ["ADMIN"], None)
+        return self._crear_usuario(None, nombre, apellido, email, password, ["ADMIN"], fecha_registro)
 
     def registrar_usuario(self, sesion: SesionActiva, nombre: str, apellido: str, email: str, password: str,
                           roles: list[str], cliente_id: int | None = None,

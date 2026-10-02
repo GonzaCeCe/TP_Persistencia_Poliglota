@@ -105,6 +105,10 @@ class ServicioAuth:
         requerir_nivel(sesion, NIVEL_ADMIN)
         return self._rel.listar_usuarios()
 
+    def directorio(self, sesion: SesionActiva) -> list[dict]:
+        return [{"id": u["id"], "nombre": u["nombre"], "apellido": u["apellido"], "roles": u["roles"]}
+                for u in self._rel.listar_usuarios() if u["estado"] == "ACTIVO"]
+
     def login(self, email: str, password: str) -> SesionActiva:
         email = email.strip().lower()
         usuario = self._rel.buscar_usuario_por_email(email)

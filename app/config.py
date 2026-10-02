@@ -29,6 +29,7 @@ class Config:
     mongo_host: str
     mongo_port: int
     mongo_db: str
+    mongo_replica_set: str
     neo4j_host: str
     neo4j_bolt_port: int
     neo4j_user: str
@@ -54,6 +55,7 @@ def cargar_config() -> Config:
         mongo_host=_leer("MONGO_HOST"),
         mongo_port=int(_leer("MONGO_PORT")),
         mongo_db=_leer("MONGO_DB"),
+        mongo_replica_set=_leer("MONGO_REPLICA_SET"),
         neo4j_host=_leer("NEO4J_HOST"),
         neo4j_bolt_port=int(_leer("NEO4J_BOLT_PORT")),
         neo4j_user=_leer("NEO4J_USER"),

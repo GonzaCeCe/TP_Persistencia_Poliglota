@@ -18,7 +18,7 @@ services:
 
   mongo:
     image: mongo:7
-    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "${MONGO_PORT}"]
+    command: ["--replSet", "${MONGO_REPLICA_SET}", "--bind_ip_all", "--port", "${MONGO_PORT}"]
     ports:
       - "127.0.0.1:${MONGO_PORT}:${MONGO_PORT}"
     volumes:

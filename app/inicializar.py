@@ -48,7 +48,7 @@ def _mongosh(config: Config, argumentos: list[str]) -> str:
 def iniciar_replica_set(config: Config) -> None:
     miembro = f"localhost:{config.mongo_port}"
     iniciar = (f"try {{ rs.status().ok }} catch (e) {{ "
-               f"rs.initiate({{_id: 'rs0', members: [{{_id: 0, host: '{miembro}'}}]}}).ok }}")
+               f"rs.initiate({{_id: '{config.mongo_replica_set}', members: [{{_id: 0, host: '{miembro}'}}]}}).ok }}")
     _mongosh(config, ["--eval", iniciar])
     for _ in range(30):
         if _mongosh(config, ["--eval", "db.hello().isWritablePrimary"]) == "true":

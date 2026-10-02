@@ -68,3 +68,25 @@ ocurrido antes de cargarlo.
 ## D9. Capa de consola
 
 La capa `ui` es `app/main.py`, con una función por submenú, siguiendo la estructura de carpetas fijada.
+
+## D10. `lecturas` sin validador `$jsonSchema`
+
+MongoDB 7 rechaza un `validator` en colecciones time series (`'timeseries' is not allowed with
+'validator'`). Como `lecturas` debe ser time series, es la única colección sin `$jsonSchema`: su estructura
+y rangos (humedad y batería entre 0 y 100, latitud entre −90 y 90, longitud entre −180 y 180) se validan
+en `dominio/reglas.py` antes de insertar. El resto de las colecciones sí tiene validador.
+
+## D11. Ruta de un incidente
+
+`incidente.ruta` es el par origen-destino **del envío** (por ejemplo `ARBUE-BRSSZ`), no del tramo. El
+tramo afectado queda identificado en `incidente.tramo_id`. Se usa la ruta del envío porque es la misma
+unidad que usa la predicción ("tasa histórica de demora de la ruta"), así el ranking de rutas con más
+incidentes y la predicción hablan de lo mismo. Los códigos de ubicación siguen el formato UN/LOCODE
+(2 letras de país + 3 caracteres).
+
+## D12. Ejecución de los scripts de creación
+
+`docker-compose.yml` monta `./scripts` en `/scripts` (solo lectura) dentro de los contenedores de
+PostgreSQL, MongoDB y Neo4j. Los scripts se ejecutan con `psql -f`, `mongosh --file` y `cypher-shell -f`
+en lugar de pasarlos por stdin: así un error corta la ejecución con código distinto de cero, la salida es
+limpia y el mismo comando funciona igual en PowerShell y en bash. Los scripts usan solo caracteres ASCII.

@@ -39,7 +39,6 @@ class ServicioComercial:
         requerir_nivel(sesion, NIVEL_ADMIN)
         self._validar_periodo_terminado(periodo, hoy)
         emision = reglas.fecha_emision(periodo)
-        self._validar_periodo_abierto(emision)
         candidatos = self._doc.envios_para_facturar(reglas.fin_periodo_utc(periodo))
         reconciliados = self._reconciliar(candidatos)
         pendientes = [envio for envio in candidatos if envio["_id"] not in reconciliados]
@@ -50,6 +49,8 @@ class ServicioComercial:
         for envio in pendientes:
             if envio["_id"] not in sin_costo:
                 por_cliente[envio["cliente"]["id"]].append(envio)
+        if por_cliente:
+            self._validar_periodo_abierto(emision)
         facturas = [self._facturar_cliente(cliente_id, periodo, emision, envios)
                     for cliente_id, envios in sorted(por_cliente.items())]
         log.info("Facturación %s: %s facturas, %s envíos reconciliados", periodo, len(facturas), len(reconciliados))

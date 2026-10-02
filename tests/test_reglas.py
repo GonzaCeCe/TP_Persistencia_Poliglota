@@ -84,7 +84,7 @@ class TestConversaciones:
     def test_id_grupal(self):
         assert reglas.id_conversacion_grupal(2) == "g2"
 
-    @pytest.mark.parametrize("contenido", ["", "   ", "x" * 2001])
+    @pytest.mark.parametrize("contenido", ["", "   ", "x" * 2001], ids=["vacio", "solo_espacios", "2001_caracteres"])
     def test_contenido_invalido(self, contenido):
         with pytest.raises(ErrorNegocio):
             reglas.validar_contenido_mensaje(contenido)

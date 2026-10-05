@@ -51,9 +51,6 @@ class Conexiones:
             )
         return self._pg
 
-    def mongo_cliente(self) -> MongoClient:
-        return self._mongo
-
     def mongo(self) -> Database:
         return self._mongo[self._config.mongo_db]
 

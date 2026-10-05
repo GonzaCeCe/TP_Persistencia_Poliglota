@@ -147,6 +147,18 @@ class ServicioComercial:
 
     # Control de integridad
 
+    def _reconciliar_contadores_de_incidentes(self) -> list[dict]:
+        corregidos = []
+        for envio in self._doc.todos_los_envios():
+            reales = self._doc.contar_incidentes_de_envio(envio["_id"])
+            if reales != envio["cantidad_incidentes"]:
+                self._doc.corregir_cantidad_incidentes(envio["_id"], reales)
+                log.warning("Envío %s: cantidad_incidentes corregida de %s a %s",
+                            envio["_id"], envio["cantidad_incidentes"], reales)
+                corregidos.append({"envio_id": envio["_id"], "contador_anterior": envio["cantidad_incidentes"],
+                                   "incidentes_reales": reales})
+        return corregidos
+
     def control_integridad(self, sesion: SesionActiva) -> dict:
         requerir_nivel(sesion, NIVEL_ADMIN)
         marcados = self._doc.envios_marcados_como_facturados()
@@ -156,6 +168,7 @@ class ServicioComercial:
             "facturas_con_importe_distinto_a_items": self._rel.facturas_con_importe_inconsistente(),
             "envios_facturados_sin_item": [{"envio_id": envio["_id"], "factura_id": envio.get("factura_id")}
                                            for envio in marcados if envio["_id"] not in con_item],
+            "contadores_de_incidentes_corregidos": self._reconciliar_contadores_de_incidentes(),
         }
         problemas = sum(len(filas) for filas in resultado.values())
         if problemas:

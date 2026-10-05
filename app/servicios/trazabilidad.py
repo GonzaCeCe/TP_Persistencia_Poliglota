@@ -14,6 +14,10 @@ log = logging.getLogger(__name__)
 SEVERIDADES = ("BAJA", "MEDIA", "ALTA", "CRITICA")
 
 
+def _a_milisegundos(momento: datetime) -> datetime:
+    return momento.replace(microsecond=momento.microsecond // 1000 * 1000)
+
+
 class ServicioTrazabilidad:
     def __init__(self, relacional: RepositorioRelacional, documental: RepositorioDocumental,
                  grafo: RepositorioGrafo, sincronizacion: ServicioSincronizacion):
@@ -34,7 +38,7 @@ class ServicioTrazabilidad:
         requerir_nivel(sesion, NIVEL_OPERADOR)
         envio = self._doc.obtener_envio(envio_id)
         nuevo_estado = reglas.estado_tras_evento(tipo)
-        momento = fecha_hora or reglas.ahora_utc()
+        momento = _a_milisegundos(fecha_hora or reglas.ahora_utc())
         self._validar_evento(envio, tipo, momento)
         evento = {"envio_id": envio_id, "contenedor_ids": [c["id"] for c in envio["contenedores"]],
                   "fecha_hora": momento, "tipo": tipo, "ubicacion": ubicacion.strip(), "descripcion": descripcion.strip()}
@@ -42,19 +46,24 @@ class ServicioTrazabilidad:
         metricas = None
         if nuevo_estado == "ENTREGADO":
             metricas = reglas.metricas_de_entrega(envio["fecha_creacion"], envio["fecha_entrega_estimada"], momento)
-
-        def insertar_y_aplicar(sesion_mongo) -> bool:
-            self._doc.insertar_evento(evento, sesion_mongo)
-            return self._doc.aplicar_evento(envio_id, ultimo_evento, nuevo_estado, metricas, sesion_mongo)
-
-        avanzo = self._doc.en_transaccion(insertar_y_aplicar)
-        if avanzo and nuevo_estado == "ENTREGADO":
-            self._rel.cambiar_estado_contenedores(evento["contenedor_ids"], "DISPONIBLE", "EN_USO")
-        if avanzo and nuevo_estado is not None:
+        es_nuevo = self._doc.insertar_evento(evento)
+        if not es_nuevo:
+            log.info("Evento %s del envío %s en %s ya registrado: reintento, no se duplica", tipo, envio_id, momento)
+        avanzo = self._doc.aplicar_evento(envio_id, ultimo_evento, nuevo_estado, metricas)
+        actual = self._doc.obtener_envio(envio_id)
+        es_el_ultimo = (actual["ultimo_evento"]["tipo"], actual["ultimo_evento"]["fecha_hora"]) == (tipo, momento)
+        if es_el_ultimo and nuevo_estado == "ENTREGADO":
+            self._liberar_contenedores(actual)
+        if es_el_ultimo and nuevo_estado is not None:
             self._sync.proyectar_envio(envio_id)
         log.info("Evento %s registrado en el envío %s (%s)", tipo, envio_id,
-                 "estado actualizado" if avanzo else "evento anterior al último: solo historial")
-        return {"estado_actualizado": avanzo, "estado": self._doc.obtener_envio(envio_id)["estado"]}
+                 "estado actualizado" if avanzo else "sin cambio de estado")
+        return {"duplicado": not es_nuevo, "estado_actualizado": avanzo, "estado": actual["estado"]}
+
+    def _liberar_contenedores(self, envio: dict) -> None:
+        libres = [c["id"] for c in envio["contenedores"] if self._doc.envio_activo_con_contenedor(c["id"]) is None]
+        if libres:
+            self._rel.cambiar_estado_contenedores(libres, "DISPONIBLE", "EN_USO")
 
     def _validar_evento(self, envio: dict, tipo: str, momento: datetime) -> None:
         if envio["estado"] == "CANCELADO":
@@ -133,12 +142,8 @@ class ServicioTrazabilidad:
             "descripcion": descripcion,
             "fecha_cierre": None,
         }
-
-        def insertar_y_contar(sesion_mongo) -> None:
-            self._doc.insertar_incidente(incidente, sesion_mongo)
-            self._doc.incrementar_incidentes(envio["_id"], sesion_mongo)
-
-        self._doc.en_transaccion(insertar_y_contar)
+        self._doc.insertar_incidente(incidente)
+        self._doc.incrementar_incidentes(envio["_id"])
         log.info("Incidente %s (%s, %s) en el envío %s, tramo %s", incidente["_id"], tipo, severidad,
                  envio["_id"], incidente["tramo_id"])
         return incidente["_id"]

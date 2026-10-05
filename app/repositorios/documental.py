@@ -1,10 +1,9 @@
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Callable, Iterator, TypeVar
+from typing import Iterator
 
 from bson import ObjectId
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
-from pymongo.client_session import ClientSession
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError, WriteError
 
@@ -19,8 +18,6 @@ ULTIMO_MENSAJE_POR_CONVERSACION = {
     "_id": "$conversacion_id", "mensajes": {"$sum": 1}, "fecha_hora": {"$first": "$fecha_hora"},
     "contenido": {"$first": "$contenido"}, "participantes": {"$first": "$participantes"},
 }
-
-T = TypeVar("T")
 
 
 @contextmanager
@@ -83,10 +80,6 @@ class RepositorioDocumental:
     def _db(self) -> Database:
         return self._conexiones.mongo()
 
-    def en_transaccion(self, operacion: Callable[[ClientSession], T]) -> T:
-        with _traducir_errores(), self._conexiones.mongo_cliente().start_session() as sesion:
-            return sesion.with_transaction(operacion)
-
     def siguiente_id(self, secuencia: str) -> int:
         contador = self._db.contadores.find_one_and_update(
             {"_id": secuencia}, {"$inc": {"valor": 1}}, upsert=True, return_document=ReturnDocument.AFTER)
@@ -134,7 +127,7 @@ class RepositorioDocumental:
         return resultado.modified_count == 1
 
     def aplicar_evento(self, envio_id: int, ultimo_evento: dict, nuevo_estado: str | None,
-                       metricas_de_entrega: dict | None, sesion: ClientSession) -> bool:
+                       metricas_de_entrega: dict | None) -> bool:
         cambios = {"ultimo_evento": ultimo_evento}
         if nuevo_estado is not None:
             cambios.update(estado=nuevo_estado, grafo_sincronizado=False)
@@ -143,7 +136,7 @@ class RepositorioDocumental:
         resultado = self._db.envios.update_one(
             {"_id": envio_id, "$or": [{"ultimo_evento": None},
                                       {"ultimo_evento.fecha_hora": {"$lt": ultimo_evento["fecha_hora"]}}]},
-            {"$set": cambios}, session=sesion)
+            {"$set": cambios})
         return resultado.modified_count == 1
 
     def cancelar_envio(self, envio_id: int) -> bool:
@@ -152,8 +145,11 @@ class RepositorioDocumental:
             {"$set": {"estado": "CANCELADO", "grafo_sincronizado": False}})
         return resultado.modified_count == 1
 
-    def incrementar_incidentes(self, envio_id: int, sesion: ClientSession) -> None:
-        self._db.envios.update_one({"_id": envio_id}, {"$inc": {"cantidad_incidentes": 1}}, session=sesion)
+    def incrementar_incidentes(self, envio_id: int) -> None:
+        self._db.envios.update_one({"_id": envio_id}, {"$inc": {"cantidad_incidentes": 1}})
+
+    def corregir_cantidad_incidentes(self, envio_id: int, cantidad: int) -> None:
+        self._db.envios.update_one({"_id": envio_id}, {"$set": {"cantidad_incidentes": cantidad}})
 
     def envio_activo_con_contenedor(self, contenedor_id: int) -> dict | None:
         return self._db.envios.find_one({"contenedores.id": contenedor_id, "estado": {"$nin": CERRADOS}})
@@ -196,8 +192,12 @@ class RepositorioDocumental:
 
     # Eventos
 
-    def insertar_evento(self, evento: dict, sesion: ClientSession) -> None:
-        self._db.eventos.insert_one(evento, session=sesion)
+    def insertar_evento(self, evento: dict) -> bool:
+        try:
+            self._db.eventos.insert_one(evento)
+        except DuplicateKeyError:
+            return False
+        return True
 
     def eventos_de_envio(self, envio_id: int) -> list[dict]:
         return list(self._db.eventos.find({"envio_id": envio_id}).sort("fecha_hora", ASCENDING))
@@ -223,8 +223,12 @@ class RepositorioDocumental:
 
     # Incidentes
 
-    def insertar_incidente(self, incidente: dict, sesion: ClientSession) -> None:
-        self._db.incidentes.insert_one(incidente, session=sesion)
+    def insertar_incidente(self, incidente: dict) -> None:
+        with _traducir_errores():
+            self._db.incidentes.insert_one(incidente)
+
+    def contar_incidentes_de_envio(self, envio_id: int) -> int:
+        return self._db.incidentes.count_documents({"envio_id": envio_id})
 
     def obtener_incidente(self, incidente_id: int) -> dict:
         return self._obtener("incidentes", incidente_id, "Incidente")

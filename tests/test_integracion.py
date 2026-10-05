@@ -6,7 +6,7 @@ from psycopg import sql
 
 from app.datos_prueba import USUARIOS
 from app.ensamblado import crear_aplicacion
-from app.infra.errores import ErrorNegocio, IntegridadError, NoAutorizado
+from app.infra.errores import ErrorNegocio, NoAutorizado
 
 pytestmark = pytest.mark.integracion
 
@@ -109,7 +109,7 @@ def test_control_de_integridad_devuelve_todo_vacio(app, admin):
     resultado = app.comercial.control_integridad(admin)
 
     assert resultado == {clave: [] for clave in resultado}
-    assert len(resultado) == 3
+    assert len(resultado) == 4
 
 
 def test_usuario_de_cliente_no_ve_envios_de_otro_cliente(app, admin, usuario_cliente):
@@ -125,16 +125,31 @@ def test_usuario_de_cliente_no_ve_envios_de_otro_cliente(app, admin, usuario_cli
     assert cuenta["cliente_id"] == usuario_cliente.cliente_id
 
 
-def test_reintento_de_evento_no_lo_duplica(app, admin):
+def test_registrar_dos_veces_el_mismo_evento_no_lo_duplica_ni_cambia_el_estado(app, admin):
     envio = next(e for e in app.operativa.listar_envios(admin) if e["estado"] == "ENTREGADO")
     historial = app.trazabilidad.historial_eventos(admin, envio["_id"])
-    evento, eventos_antes = historial[0], len(historial)
+    entrega = historial[-1]
+    reservado_por_otro = {c["id"]: c["estado"] for c in app.operativa.listar_contenedores(admin)}
 
-    with pytest.raises(IntegridadError, match="duplicado"):
-        app.trazabilidad.registrar_evento(admin, envio["_id"], evento["tipo"], evento["ubicacion"],
-                                          evento["descripcion"], evento["fecha_hora"])
+    resultado = app.trazabilidad.registrar_evento(admin, envio["_id"], entrega["tipo"], entrega["ubicacion"],
+                                                  entrega["descripcion"], entrega["fecha_hora"])
 
-    assert len(app.trazabilidad.historial_eventos(admin, envio["_id"])) == eventos_antes
+    assert resultado["duplicado"] and not resultado["estado_actualizado"]
+    assert resultado["estado"] == "ENTREGADO"
+    assert len(app.trazabilidad.historial_eventos(admin, envio["_id"])) == len(historial)
+    assert {c["id"]: c["estado"] for c in app.operativa.listar_contenedores(admin)} == reservado_por_otro
+
+
+def test_contador_de_incidentes_alterado_se_detecta_y_corrige(app, admin):
+    envio = next(e for e in app.operativa.listar_envios(admin) if e["cantidad_incidentes"] > 0)
+    app.conexiones.mongo().envios.update_one({"_id": envio["_id"]}, {"$set": {"cantidad_incidentes": 99}})
+
+    corregidos = app.comercial.control_integridad(admin)["contadores_de_incidentes_corregidos"]
+
+    assert corregidos == [{"envio_id": envio["_id"], "contador_anterior": 99,
+                           "incidentes_reales": envio["cantidad_incidentes"]}]
+    assert app.operativa.ver_envio(admin, envio["_id"])["cantidad_incidentes"] == envio["cantidad_incidentes"]
+    assert app.comercial.control_integridad(admin)["contadores_de_incidentes_corregidos"] == []
 
 
 def test_cierre_mensual_es_idempotente(app, admin):

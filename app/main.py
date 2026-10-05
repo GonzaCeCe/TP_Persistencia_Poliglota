@@ -444,7 +444,9 @@ def registrar_evento(app, sesion):
     tipo = elegir("Tipo de evento", ("CARGA_INICIADA", "EN_TRANSITO", "ADUANA", "RETRASO", "DESCARGA", "ENTREGADO"))
     resultado = app.trazabilidad.registrar_evento(sesion, envio_id, tipo, pedir_texto("Ubicación"),
                                                   pedir_texto("Descripción", False) or "", pedir_fecha_hora("Fecha y hora"))
-    if resultado["estado_actualizado"]:
+    if resultado["duplicado"]:
+        ok(f"el evento ya estaba registrado: no se duplicó; el envío sigue {resultado['estado']}")
+    elif resultado["estado_actualizado"]:
         ok(f"evento registrado; el envío quedó {resultado['estado']}")
     else:
         ok(f"evento registrado en el historial; no es el más reciente, el envío sigue {resultado['estado']}")

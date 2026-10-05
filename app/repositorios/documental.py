@@ -189,16 +189,17 @@ class RepositorioDocumental:
     # Lecturas
 
     def insertar_lectura(self, lectura: dict) -> ObjectId:
-        return self._db.lecturas.insert_one(lectura).inserted_id
+        with _traducir_errores():
+            return self._db.lecturas.insert_one(lectura).inserted_id
 
     def lecturas_de_sensor(self, sensor_id: int, desde: datetime, hasta: datetime) -> list[dict]:
-        filtro = {"meta.sensor_id": sensor_id, **_rango("fecha_hora", desde, hasta)}
+        filtro = {"sensor_id": sensor_id, **_rango("fecha_hora", desde, hasta)}
         return list(self._db.lecturas.find(filtro, {"_id": 0}).sort("fecha_hora", ASCENDING))
 
     def posiciones_de_contenedor(self, contenedor_id: int) -> list[dict]:
         return list(self._db.lecturas.find(
-            {"meta.contenedor_id": contenedor_id, "lat": {"$ne": None}},
-            {"_id": 0, "fecha_hora": 1, "lat": 1, "lon": 1, "meta": 1, "temperatura": 1},
+            {"contenedor_id": contenedor_id, "lat": {"$ne": None}},
+            {"_id": 0, "fecha_hora": 1, "lat": 1, "lon": 1, "sensor_id": 1, "temperatura": 1},
         ).sort("fecha_hora", ASCENDING))
 
     # Incidentes

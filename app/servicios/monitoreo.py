@@ -38,7 +38,7 @@ class ServicioMonitoreo:
         valores = {nombre: float(medidas[nombre]) for nombre in reglas.MEDIDAS if medidas.get(nombre) is not None}
         reglas.validar_medidas(valores)
         momento = fecha_hora or reglas.ahora_utc()
-        self._doc.insertar_lectura({"meta": {"sensor_id": sensor_id, "contenedor_id": sensor["contenedor_id"]},
+        self._doc.insertar_lectura({"sensor_id": sensor_id, "contenedor_id": sensor["contenedor_id"],
                                     "fecha_hora": momento, **valores})
         self._actualizar_estado_en_vivo(sensor, valores, momento)
         if sensor["estado"] == "INACTIVO":
@@ -170,7 +170,7 @@ def _geojson(contenedor: dict, posiciones: list[dict]) -> dict:
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": [p["lon"], p["lat"]]},
         "properties": {"fecha_hora": p["fecha_hora"].isoformat(), "temperatura": p.get("temperatura"),
-                       "sensor_id": p["meta"]["sensor_id"]},
+                       "sensor_id": p["sensor_id"]},
     } for p in posiciones]
     linea = {
         "type": "Feature",

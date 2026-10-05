@@ -102,7 +102,7 @@ def test_alerta_abierta_no_se_duplica(app, admin):
         assert len(abiertas) == 1
         assert len(app.trazabilidad.incidentes_abiertos(admin)) == incidentes_antes
     finally:
-        app.conexiones.mongo().lecturas.delete_many({"meta.sensor_id": alerta["sensor_id"], "fecha_hora": momento})
+        app.conexiones.mongo().lecturas.delete_many({"sensor_id": alerta["sensor_id"], "fecha_hora": momento})
 
 
 def test_control_de_integridad_devuelve_todo_vacio(app, admin):

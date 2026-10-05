@@ -1,6 +1,5 @@
 // Creacion del modelo documental. Requiere el replica set iniciado. Idempotente.
 // Uso: docker compose exec mongo mongosh --quiet --port <MONGO_PORT> <MONGO_DB> --file /scripts/mongo_init.js
-// lecturas es time series: MongoDB 7 no admite validator en ese tipo de coleccion (se valida en la aplicacion).
 
 const ENTERO = { bsonType: ['int', 'long'] };
 const ENTERO_O_NULO = { bsonType: ['int', 'long', 'null'] };
@@ -195,6 +194,22 @@ const ESQUEMAS = {
       fecha_calculo: FECHA,
       factores: { bsonType: 'object' }
     }
+  },
+
+  lecturas: {
+    bsonType: 'object',
+    required: ['sensor_id', 'contenedor_id', 'fecha_hora'],
+    properties: {
+      sensor_id: ENTERO,
+      contenedor_id: ENTERO,
+      fecha_hora: FECHA,
+      temperatura: NUMERO_O_NULO,
+      humedad: { bsonType: ['number', 'null'], minimum: 0, maximum: 100 },
+      vibracion: NUMERO_O_NULO,
+      lat: { bsonType: ['number', 'null'], minimum: -90, maximum: 90 },
+      lon: { bsonType: ['number', 'null'], minimum: -180, maximum: 180 },
+      bateria: { bsonType: ['number', 'null'], minimum: 0, maximum: 100 }
+    }
   }
 };
 
@@ -207,20 +222,7 @@ function asegurarColeccion(nombre) {
   }
 }
 
-function asegurarLecturasTimeSeries() {
-  const existente = db.getCollectionInfos({ name: 'lecturas' })[0];
-  if (existente && existente.type !== 'timeseries') {
-    throw new Error('La coleccion lecturas existe pero no es time series: eliminarla y volver a ejecutar');
-  }
-  if (!existente) {
-    db.createCollection('lecturas', {
-      timeseries: { timeField: 'fecha_hora', metaField: 'meta', granularity: 'minutes' }
-    });
-  }
-}
-
 Object.keys(ESQUEMAS).forEach(asegurarColeccion);
-asegurarLecturasTimeSeries();
 
 db.envios.createIndex({ 'cliente.id': 1, fecha_creacion: 1 });
 db.envios.createIndex({ estado: 1, fecha_entrega_estimada: 1 });
@@ -230,8 +232,8 @@ db.envios.createIndex({ estado: 1, fecha_entrega_real: 1 },
                       { name: 'pendientes_de_facturar', partialFilterExpression: { facturado: false } });
 db.envios.createIndex({ grafo_sincronizado: 1 });
 
-db.lecturas.createIndex({ 'meta.sensor_id': 1, fecha_hora: 1 });
-db.lecturas.createIndex({ 'meta.contenedor_id': 1, fecha_hora: 1 });
+db.lecturas.createIndex({ sensor_id: 1, fecha_hora: -1 });
+db.lecturas.createIndex({ contenedor_id: 1, fecha_hora: 1 });
 
 db.eventos.createIndex({ envio_id: 1, fecha_hora: 1, tipo: 1 }, { unique: true });
 db.eventos.createIndex({ contenedor_ids: 1, fecha_hora: 1 });

@@ -138,6 +138,7 @@ def test_reintento_de_evento_no_lo_duplica(app, admin):
 
 
 def test_cierre_mensual_es_idempotente(app, admin):
+    app.comercial.cierre_mensual(admin, "2026-08")
     cierres_antes = _contar(app, "cierre_cc")
 
     assert app.comercial.cierre_mensual(admin, "2026-08") == 0

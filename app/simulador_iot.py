@@ -1,10 +1,13 @@
 import argparse
+import logging
 import random
 import time
 from dataclasses import dataclass
 
 from app.ensamblado import crear_aplicacion
 from app.infra.errores import ErrorAplicacion
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,6 +62,10 @@ def main() -> None:
                     alertas = app.monitoreo.registrar_lectura(sensor_id, medidas)
                 except ErrorAplicacion as error:
                     print(f"  sensor {sensor_id}: rechazada ({error})")
+                    continue
+                except Exception:
+                    log.exception("Error técnico al registrar la lectura del sensor %s", sensor_id)
+                    print(f"  sensor {sensor_id}: error técnico (¿están levantadas las bases?), detalle en el log")
                     continue
                 print(f"  ronda {ronda} sensor {sensor_id}: {medidas}")
                 for alerta in alertas:

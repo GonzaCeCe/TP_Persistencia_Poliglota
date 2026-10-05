@@ -1,9 +1,13 @@
+import logging
 import sys
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from app.ensamblado import Aplicacion, crear_aplicacion
+from app.infra.errores import ErrorAplicacion
 from app.servicios.auth import SesionActiva
+
+log = logging.getLogger(__name__)
 
 USUARIOS = [
     ("ADMIN", "admin@logistica.com", "admin1234"),
@@ -145,6 +149,14 @@ def main() -> None:
                   "  python -m app.inicializar\n  python -m app.datos_prueba")
             sys.exit(1)
         cargar(app)
+    except ErrorAplicacion as error:
+        print(f"No se pudieron cargar los datos de prueba: {error}")
+        sys.exit(1)
+    except Exception:
+        log.exception("Error técnico al cargar los datos de prueba")
+        print("Error técnico al cargar los datos de prueba (¿están levantadas e inicializadas las bases?). "
+              "Detalle en logistica.log.")
+        sys.exit(1)
     finally:
         app.cerrar()
     print("Datos de prueba cargados. Usuarios:")

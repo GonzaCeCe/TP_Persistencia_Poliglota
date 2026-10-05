@@ -7,6 +7,11 @@ TAMANIO_MAXIMO_BYTES = 1_000_000
 ARCHIVOS_DE_RESPALDO = 3
 
 
+class FormatoConsola(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return f"{record.levelname}: {record.getMessage()}"
+
+
 def configurar_logs(archivo: Path) -> None:
     raiz = logging.getLogger()
     if raiz.handlers:
@@ -20,7 +25,7 @@ def configurar_logs(archivo: Path) -> None:
 
     a_consola = logging.StreamHandler()
     a_consola.setLevel(logging.WARNING)
-    a_consola.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    a_consola.setFormatter(FormatoConsola())
 
     raiz.addHandler(a_archivo)
     raiz.addHandler(a_consola)

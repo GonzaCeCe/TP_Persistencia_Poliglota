@@ -345,7 +345,7 @@ def alta_vehiculo(app, sesion):
 def listar_envios(app, sesion):
     mostrar_tabla([{**e, "cliente": e["cliente"]["razon_social"], "origen": e["origen"]["codigo"],
                     "destino": e["destino"]["codigo"], "tramos": len(e["tramos"])}
-                   for e in app.operativa.listar_envios(sesion)],
+                   for e in app.operativa.listar_envios(sesion, pedir_texto("País de destino (2 letras)", False))],
                   ["_id", "cliente", "origen", "destino", "estado", "prioridad", "tramos", "fecha_entrega_estimada",
                    "fecha_entrega_real", "facturado"])
 

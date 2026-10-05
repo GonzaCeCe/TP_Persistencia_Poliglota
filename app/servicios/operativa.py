@@ -255,8 +255,8 @@ class ServicioOperativa:
         log.info("Envío %s cancelado por el usuario %s; contenedores liberados", envio_id, sesion.usuario_id)
         self._sync.proyectar_envio(envio_id)
 
-    def listar_envios(self, sesion: SesionActiva) -> list[dict]:
-        return self._doc.listar_envios(sesion.cliente_id)
+    def listar_envios(self, sesion: SesionActiva, pais_destino: str | None = None) -> list[dict]:
+        return self._doc.listar_envios(sesion.cliente_id, pais_destino.strip().upper() if pais_destino else None)
 
     def ver_envio(self, sesion: SesionActiva, envio_id: int) -> dict:
         envio = self._doc.obtener_envio(envio_id)

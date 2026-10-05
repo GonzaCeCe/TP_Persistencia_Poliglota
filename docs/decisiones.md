@@ -118,6 +118,10 @@ limpia y el mismo comando funciona igual en PowerShell y en bash. Los scripts us
 - El tiempo de envío se mide desde `fecha_creacion` hasta `fecha_entrega_real`, en días con decimales.
   Todas las fechas se guardan en UTC.
 
+- "Listar envíos" acepta un filtro opcional por país de destino. Es la consulta que usa el índice
+  `{destino.pais}`: el reporte "envíos por país" agrupa todos los envíos con `$group` y un agrupamiento
+  sin filtro no aprovecha índices.
+
 ## D15. Lecturas, alertas y sensores
 
 - `registrar_lectura` no recibe sesión: es la puerta de entrada de los dispositivos (y del simulador). La

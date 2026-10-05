@@ -348,9 +348,6 @@ class RepositorioRelacional:
         return self._todos(self._FACTURA_CON_PAGOS + "WHERE f.cliente_id = %s ORDER BY f.fecha_emision, f.id",
                            (cliente_id,))
 
-    def items_de_factura(self, factura_id: int) -> list[dict]:
-        return self._todos("SELECT * FROM factura_item WHERE factura_id = %s ORDER BY envio_id", (factura_id,))
-
     def insertar_pago(self, factura_id: int, fecha: date, monto: Decimal, medio_pago: str) -> int:
         return self._uno("INSERT INTO pago (factura_id, fecha, monto, medio_pago) VALUES (%s, %s, %s, %s) RETURNING id",
                          (factura_id, fecha, monto, medio_pago))["id"]

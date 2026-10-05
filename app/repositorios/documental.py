@@ -92,8 +92,12 @@ class RepositorioDocumental:
     def obtener_envio(self, envio_id: int) -> dict:
         return self._obtener("envios", envio_id, "Envío")
 
-    def listar_envios(self, cliente_id: int | None = None) -> list[dict]:
-        filtro = {} if cliente_id is None else {"cliente.id": cliente_id}
+    def listar_envios(self, cliente_id: int | None = None, pais_destino: str | None = None) -> list[dict]:
+        filtro = {}
+        if cliente_id is not None:
+            filtro["cliente.id"] = cliente_id
+        if pais_destino is not None:
+            filtro["destino.pais"] = pais_destino
         return list(self._db.envios.find(filtro).sort("_id", ASCENDING))
 
     def envio_ids_de_cliente(self, cliente_id: int) -> list[int]:

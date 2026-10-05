@@ -82,7 +82,7 @@ class ServicioMensajeria:
     def mis_conversaciones(self, sesion: SesionActiva) -> list[dict]:
         conversaciones = []
         for resumen in self._doc.resumen_conversaciones_privadas(sesion.usuario_id):
-            otro_id = next(p for p in resumen["ultimo"]["participantes"] if p != sesion.usuario_id)
+            otro_id = next(p for p in resumen["participantes"] if p != sesion.usuario_id)
             otro = self._rel.obtener_usuario(otro_id)
             conversaciones.append(_resumen(resumen, f"Privada con {otro['nombre']} {otro['apellido']} (#{otro_id})"))
         mis_grupos = {reglas.id_conversacion_grupal(g["_id"]): g for g in self._doc.grupos_de_usuario(sesion.usuario_id)}
@@ -110,4 +110,4 @@ class ServicioMensajeria:
 
 def _resumen(resumen: dict, titulo: str) -> dict:
     return {"conversacion_id": resumen["_id"], "titulo": titulo, "mensajes": resumen["mensajes"],
-            "ultimo_mensaje": resumen["ultimo"]["fecha_hora"], "ultimo_contenido": resumen["ultimo"]["contenido"]}
+            "ultimo_mensaje": resumen["fecha_hora"], "ultimo_contenido": resumen["contenido"]}

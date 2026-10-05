@@ -83,7 +83,7 @@ class ServicioReportes:
                 doc.ranking_clientes_por_volumen),
             "desempeno_historico": TipoDeReporte(
                 "Análisis histórico de desempeño: entregas a tiempo por mes", "MongoDB",
-                ("mes", "entregados", "a_tiempo", "porcentaje_a_tiempo"),
+                ("mes", "entregados", "demorados", "a_tiempo", "porcentaje_a_tiempo"),
                 doc.desempeno_mensual),
             "red_relaciones": TipoDeReporte(
                 "Red de relaciones clientes-operadores-envíos", "Neo4j",

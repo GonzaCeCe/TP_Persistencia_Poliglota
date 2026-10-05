@@ -39,10 +39,13 @@ class ServicioTrazabilidad:
         evento = {"envio_id": envio_id, "contenedor_ids": [c["id"] for c in envio["contenedores"]],
                   "fecha_hora": momento, "tipo": tipo, "ubicacion": ubicacion.strip(), "descripcion": descripcion.strip()}
         ultimo_evento = {"tipo": tipo, "fecha_hora": momento, "ubicacion": evento["ubicacion"]}
+        metricas = None
+        if nuevo_estado == "ENTREGADO":
+            metricas = reglas.metricas_de_entrega(envio["fecha_creacion"], envio["fecha_entrega_estimada"], momento)
 
         def insertar_y_aplicar(sesion_mongo) -> bool:
             self._doc.insertar_evento(evento, sesion_mongo)
-            return self._doc.aplicar_evento(envio_id, ultimo_evento, nuevo_estado, sesion_mongo)
+            return self._doc.aplicar_evento(envio_id, ultimo_evento, nuevo_estado, metricas, sesion_mongo)
 
         avanzo = self._doc.en_transaccion(insertar_y_aplicar)
         if avanzo and nuevo_estado == "ENTREGADO":

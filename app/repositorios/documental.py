@@ -8,15 +8,17 @@ from pymongo.client_session import ClientSession
 from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError, WriteError
 
-from app.dominio.reglas import ESTADOS_CERRADOS
+from app.dominio.reglas import ESTADOS_CERRADOS, dias_entre, ruta
 from app.infra.conexiones import Conexiones
 from app.infra.errores import IntegridadError, NoEncontrado
 
 CODIGO_VALIDACION_FALLIDA = 121
 CERRADOS = sorted(ESTADOS_CERRADOS)
 AGRUPACIONES_DE_ENVIOS = {"pais": "$destino.pais", "estado": "$estado", "cliente": "$cliente.id"}
-RUTA_DEL_ENVIO = {"$concat": ["$origen.codigo", "-", "$destino.codigo"]}
-ENTREGA_TARDIA = {"$gt": ["$fecha_entrega_real", "$fecha_entrega_estimada"]}
+ULTIMO_MENSAJE_POR_CONVERSACION = {
+    "_id": "$conversacion_id", "mensajes": {"$sum": 1}, "fecha_hora": {"$first": "$fecha_hora"},
+    "contenido": {"$first": "$contenido"}, "participantes": {"$first": "$participantes"},
+}
 
 T = TypeVar("T")
 
@@ -43,10 +45,26 @@ def _rango(campo: str, desde: datetime | None, hasta: datetime | None) -> dict:
     return {campo: condicion} if condicion else {}
 
 
-def _nombrar_grupo(agrupacion: str) -> list[dict]:
-    if agrupacion == "cliente":
-        return [{"$set": {"cliente_id": "$_id"}}]
-    return [{"$set": {agrupacion: "$_id"}}, {"$unset": "cliente"}]
+def _renombrar_id(fila: dict, nombre: str | None) -> dict:
+    valor = fila.pop("_id")
+    return fila if nombre is None else {nombre: valor, **fila}
+
+
+def _nombrar_grupo(fila: dict, agrupacion: str) -> dict:
+    return _renombrar_id(fila, "cliente_id" if agrupacion == "cliente" else agrupacion)
+
+
+def _redondear(fila: dict, *campos: str) -> dict:
+    for campo in campos:
+        if fila.get(campo) is not None:
+            fila[campo] = round(fila[campo], 2)
+    return fila
+
+
+def _con_porcentaje_a_tiempo(fila: dict) -> dict:
+    fila["a_tiempo"] = fila["entregados"] - fila["demorados"]
+    fila["porcentaje_a_tiempo"] = round(fila["a_tiempo"] / fila["entregados"] * 100, 1)
+    return fila
 
 
 def _filtro_envios(desde: datetime | None, hasta: datetime | None, cliente_id: int | None,
@@ -116,12 +134,12 @@ class RepositorioDocumental:
         return resultado.modified_count == 1
 
     def aplicar_evento(self, envio_id: int, ultimo_evento: dict, nuevo_estado: str | None,
-                       sesion: ClientSession) -> bool:
+                       metricas_de_entrega: dict | None, sesion: ClientSession) -> bool:
         cambios = {"ultimo_evento": ultimo_evento}
         if nuevo_estado is not None:
             cambios.update(estado=nuevo_estado, grafo_sincronizado=False)
-        if nuevo_estado == "ENTREGADO":
-            cambios["fecha_entrega_real"] = ultimo_evento["fecha_hora"]
+        if metricas_de_entrega is not None:
+            cambios.update(fecha_entrega_real=ultimo_evento["fecha_hora"], **metricas_de_entrega)
         resultado = self._db.envios.update_one(
             {"_id": envio_id, "$or": [{"ultimo_evento": None},
                                       {"ultimo_evento.fecha_hora": {"$lt": ultimo_evento["fecha_hora"]}}]},
@@ -167,13 +185,14 @@ class RepositorioDocumental:
     def marcar_sincronizado(self, envio_id: int) -> None:
         self._db.envios.update_one({"_id": envio_id}, {"$set": {"grafo_sincronizado": True}})
 
-    def demoras_por_ruta(self) -> dict[str, tuple[int, int]]:
+    def demoras_por_ruta(self) -> dict[str, tuple[int, float]]:
         filas = self._db.envios.aggregate([
             {"$match": {"estado": "ENTREGADO"}},
-            {"$group": {"_id": RUTA_DEL_ENVIO, "entregados": {"$sum": 1},
-                        "demorados": {"$sum": {"$cond": [ENTREGA_TARDIA, 1, 0]}}}},
+            {"$group": {"_id": {"origen": "$origen.codigo", "destino": "$destino.codigo"},
+                        "entregados": {"$sum": 1}, "tasa_demora": {"$avg": "$demorado"}}},
         ])
-        return {fila["_id"]: (fila["entregados"], fila["demorados"]) for fila in filas}
+        return {ruta(fila["_id"]["origen"], fila["_id"]["destino"]): (fila["entregados"], fila["tasa_demora"] or 0.0)
+                for fila in filas}
 
     # Eventos
 
@@ -280,15 +299,15 @@ class RepositorioDocumental:
         return list(self._db.mensajes.aggregate([
             {"$match": {"participantes": usuario_id}},
             {"$sort": {"fecha_hora": DESCENDING}},
-            {"$group": {"_id": "$conversacion_id", "ultimo": {"$first": "$$ROOT"}, "mensajes": {"$sum": 1}}},
-            {"$sort": {"ultimo.fecha_hora": DESCENDING}},
+            {"$group": ULTIMO_MENSAJE_POR_CONVERSACION},
+            {"$sort": {"fecha_hora": DESCENDING}},
         ]))
 
     def resumen_conversaciones(self, conversacion_ids: list[str]) -> list[dict]:
         return list(self._db.mensajes.aggregate([
             {"$match": {"conversacion_id": {"$in": conversacion_ids}}},
             {"$sort": {"fecha_hora": DESCENDING}},
-            {"$group": {"_id": "$conversacion_id", "ultimo": {"$first": "$$ROOT"}, "mensajes": {"$sum": 1}}},
+            {"$group": ULTIMO_MENSAJE_POR_CONVERSACION},
         ]))
 
     def insertar_grupo(self, grupo: dict) -> None:
@@ -320,112 +339,98 @@ class RepositorioDocumental:
         self._db.reportes.update_one({"_id": reporte_id}, {"$set": {"estado": estado, "resultado": resultado}})
 
     def envios_agrupados(self, agrupacion: str, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
+        grupo = {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "cantidad": {"$sum": 1}}
+        if agrupacion == "cliente":
+            grupo["cliente"] = {"$first": "$cliente.razon_social"}
+        filas = self._db.envios.aggregate([
             {"$match": _filtro_envios(desde, hasta, cliente_id)},
-            {"$group": {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "cantidad": {"$sum": 1},
-                        "cliente": {"$first": "$cliente.razon_social"}}},
-            *_nombrar_grupo(agrupacion),
+            {"$group": grupo},
             {"$sort": {"cantidad": DESCENDING, "_id": ASCENDING}},
-        ]))
+        ])
+        return [_nombrar_grupo(fila, agrupacion) for fila in filas]
 
     def envios_demorados(self, ahora: datetime, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
-            {"$match": {**_filtro_envios(desde, hasta, cliente_id), "$or": [
-                {"estado": {"$nin": CERRADOS}, "fecha_entrega_estimada": {"$lt": ahora}},
-                {"estado": "ENTREGADO", "$expr": ENTREGA_TARDIA},
-            ]}},
-            {"$project": {
-                "_id": 0, "envio_id": "$_id", "cliente": "$cliente.razon_social", "estado": 1,
-                "fecha_entrega_estimada": 1, "fecha_entrega_real": 1,
-                "dias_de_demora": {"$round": [{"$divide": [{"$dateDiff": {
-                    "startDate": "$fecha_entrega_estimada",
-                    "endDate": {"$ifNull": ["$fecha_entrega_real", ahora]}, "unit": "hour"}}, 24]}, 1]},
-            }},
-            {"$sort": {"envio_id": ASCENDING}},
-        ]))
+        envios = self._db.envios.find({**_filtro_envios(desde, hasta, cliente_id), "$or": [
+            {"estado": {"$nin": CERRADOS}, "fecha_entrega_estimada": {"$lt": ahora}},
+            {"demorado": 1},
+        ]}).sort("_id", ASCENDING)
+        return [{"envio_id": envio["_id"], "cliente": envio["cliente"]["razon_social"], "estado": envio["estado"],
+                 "fecha_entrega_estimada": envio["fecha_entrega_estimada"],
+                 "fecha_entrega_real": envio["fecha_entrega_real"],
+                 "dias_de_demora": dias_entre(envio["fecha_entrega_estimada"], envio["fecha_entrega_real"] or ahora)}
+                for envio in envios]
 
-    def _duraciones_de_entregados(self, desde, hasta, cliente_id) -> list[dict]:
-        return [
-            {"$match": {**_filtro_envios(desde, hasta, cliente_id, "fecha_entrega_real"), "estado": "ENTREGADO"}},
-            {"$set": {"dias": {"$divide": [{"$dateDiff": {
-                "startDate": "$fecha_creacion", "endDate": "$fecha_entrega_real", "unit": "hour"}}, 24]}}},
-        ]
+    def _entregados(self, desde, hasta, cliente_id) -> dict:
+        return {"$match": {**_filtro_envios(desde, hasta, cliente_id, "fecha_entrega_real"), "estado": "ENTREGADO"}}
 
     def tiempos_de_envio_por_cliente(self, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
-            *self._duraciones_de_entregados(desde, hasta, cliente_id),
+        filas = self._db.envios.aggregate([
+            self._entregados(desde, hasta, cliente_id),
             {"$group": {"_id": "$cliente.id", "cliente": {"$first": "$cliente.razon_social"},
-                        "entregados": {"$sum": 1}, "dias_maximo": {"$max": "$dias"},
-                        "dias_minimo": {"$min": "$dias"}, "dias_promedio": {"$avg": "$dias"}}},
-            {"$project": {"_id": 0, "cliente_id": "$_id", "cliente": 1, "entregados": 1,
-                          "dias_maximo": {"$round": ["$dias_maximo", 2]},
-                          "dias_minimo": {"$round": ["$dias_minimo", 2]},
-                          "dias_promedio": {"$round": ["$dias_promedio", 2]}}},
-            {"$sort": {"cliente_id": ASCENDING}},
-        ]))
+                        "entregados": {"$sum": 1}, "dias_maximo": {"$max": "$dias_entrega"},
+                        "dias_minimo": {"$min": "$dias_entrega"}, "dias_promedio": {"$avg": "$dias_entrega"}}},
+            {"$sort": {"_id": ASCENDING}},
+        ])
+        return [_redondear(_renombrar_id(fila, "cliente_id"), "dias_maximo", "dias_minimo", "dias_promedio")
+                for fila in filas]
 
     def tiempo_promedio_de_entrega(self, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
-            *self._duraciones_de_entregados(desde, hasta, cliente_id),
-            {"$group": {"_id": None, "entregados": {"$sum": 1}, "dias_promedio": {"$avg": "$dias"}}},
-            {"$project": {"_id": 0, "entregados": 1, "dias_promedio": {"$round": ["$dias_promedio", 2]}}},
-        ]))
+        filas = self._db.envios.aggregate([
+            self._entregados(desde, hasta, cliente_id),
+            {"$group": {"_id": None, "entregados": {"$sum": 1}, "dias_promedio": {"$avg": "$dias_entrega"}}},
+        ])
+        return [_redondear(_renombrar_id(fila, None), "dias_promedio") for fila in filas]
 
     def promedio_de_incidentes(self, agrupacion: str, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
+        grupo = {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "envios": {"$sum": 1},
+                 "incidentes": {"$sum": "$cantidad_incidentes"}, "promedio": {"$avg": "$cantidad_incidentes"}}
+        if agrupacion == "cliente":
+            grupo["cliente"] = {"$first": "$cliente.razon_social"}
+        filas = self._db.envios.aggregate([
             {"$match": _filtro_envios(desde, hasta, cliente_id)},
-            {"$group": {"_id": AGRUPACIONES_DE_ENVIOS[agrupacion], "envios": {"$sum": 1},
-                        "incidentes": {"$sum": "$cantidad_incidentes"},
-                        "promedio": {"$avg": "$cantidad_incidentes"},
-                        "cliente": {"$first": "$cliente.razon_social"}}},
-            {"$set": {"promedio": {"$round": ["$promedio", 2]}}},
-            *_nombrar_grupo(agrupacion),
+            {"$group": grupo},
             {"$sort": {"promedio": DESCENDING, "_id": ASCENDING}},
-        ]))
+        ])
+        return [_redondear(_nombrar_grupo(fila, agrupacion), "promedio") for fila in filas]
 
     def costos_por_transporte(self, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
+        filas = self._db.envios.aggregate([
             {"$match": _filtro_envios(desde, hasta, cliente_id)},
             {"$unwind": "$tramos"},
             {"$group": {"_id": "$tramos.medio", "tramos": {"$sum": 1}, "costo_total": {"$sum": "$tramos.costo"},
                         "costo_promedio": {"$avg": "$tramos.costo"}}},
-            {"$project": {"_id": 0, "medio": "$_id", "tramos": 1, "costo_total": {"$round": ["$costo_total", 2]},
-                          "costo_promedio": {"$round": ["$costo_promedio", 2]}}},
             {"$sort": {"costo_total": DESCENDING}},
-        ]))
+        ])
+        return [_redondear(_renombrar_id(fila, "medio"), "costo_total", "costo_promedio") for fila in filas]
 
     def ranking_rutas_por_incidentes(self, desde, hasta, envio_ids: list[int] | None) -> list[dict]:
         filtro = _rango("fecha", desde, hasta)
         if envio_ids is not None:
             filtro["envio_id"] = {"$in": envio_ids}
-        return list(self._db.incidentes.aggregate([
-            {"$match": filtro},
-            {"$group": {"_id": "$ruta", "incidentes": {"$sum": 1},
-                        "abiertos": {"$sum": {"$cond": [{"$eq": ["$estado", "ABIERTO"]}, 1, 0]}}}},
-            {"$project": {"_id": 0, "ruta": "$_id", "incidentes": 1, "abiertos": 1}},
-            {"$sort": {"incidentes": DESCENDING, "ruta": ASCENDING}},
-        ]))
+        por_ruta = [{"$group": {"_id": "$ruta", "incidentes": {"$sum": 1}}},
+                    {"$sort": {"incidentes": DESCENDING, "_id": ASCENDING}}]
+        totales = self._db.incidentes.aggregate([{"$match": filtro}, *por_ruta])
+        abiertos = {fila["_id"]: fila["incidentes"]
+                    for fila in self._db.incidentes.aggregate([{"$match": {**filtro, "estado": "ABIERTO"}}, *por_ruta])}
+        filas = [_renombrar_id(fila, "ruta") for fila in totales]
+        return [{**fila, "abiertos": abiertos.get(fila["ruta"], 0)} for fila in filas]
 
     def ranking_clientes_por_volumen(self, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
+        filas = self._db.envios.aggregate([
             {"$match": {**_filtro_envios(desde, hasta, cliente_id), "estado": {"$ne": "CANCELADO"}}},
             {"$group": {"_id": "$cliente.id", "cliente": {"$first": "$cliente.razon_social"}, "envios": {"$sum": 1},
                         "volumen_m3": {"$sum": "$volumen_m3"}, "peso_kg": {"$sum": "$peso_kg"}}},
-            {"$project": {"_id": 0, "cliente_id": "$_id", "cliente": 1, "envios": 1, "volumen_m3": 1, "peso_kg": 1}},
             {"$sort": {"volumen_m3": DESCENDING, "peso_kg": DESCENDING}},
-        ]))
+        ])
+        return [_renombrar_id(fila, "cliente_id") for fila in filas]
 
     def desempeno_mensual(self, desde, hasta, cliente_id) -> list[dict]:
-        return list(self._db.envios.aggregate([
-            {"$match": {**_filtro_envios(desde, hasta, cliente_id, "fecha_entrega_real"), "estado": "ENTREGADO"}},
-            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m", "date": "$fecha_entrega_real"}},
-                        "entregados": {"$sum": 1},
-                        "a_tiempo": {"$sum": {"$cond": [ENTREGA_TARDIA, 0, 1]}}}},
-            {"$project": {"_id": 0, "mes": "$_id", "entregados": 1, "a_tiempo": 1,
-                          "porcentaje_a_tiempo": {"$round": [
-                              {"$multiply": [{"$divide": ["$a_tiempo", "$entregados"]}, 100]}, 1]}}},
-            {"$sort": {"mes": ASCENDING}},
-        ]))
+        filas = self._db.envios.aggregate([
+            self._entregados(desde, hasta, cliente_id),
+            {"$group": {"_id": "$mes_entrega", "entregados": {"$sum": 1}, "demorados": {"$sum": "$demorado"}}},
+            {"$sort": {"_id": ASCENDING}},
+        ])
+        return [_con_porcentaje_a_tiempo(_renombrar_id(fila, "mes")) for fila in filas]
 
     # Predicciones
 

@@ -161,6 +161,17 @@ class TestEnvios:
     def test_entregado_a_tiempo(self):
         assert not reglas.envio_demorado("ENTREGADO", utc(2026, 5, 1), utc(2026, 4, 30), utc(2026, 9, 2))
 
+    def test_metricas_de_entrega_a_tiempo(self):
+        metricas = reglas.metricas_de_entrega(utc(2026, 2, 2, 9), utc(2026, 2, 12, 18), utc(2026, 2, 11, 15))
+        assert metricas == {"dias_entrega": 9.25, "demorado": 0, "mes_entrega": "2026-02"}
+
+    def test_metricas_de_entrega_tarde(self):
+        metricas = reglas.metricas_de_entrega(utc(2026, 4, 6, 10), utc(2026, 5, 1, 12), utc(2026, 5, 4, 11))
+        assert metricas == {"dias_entrega": 28.04, "demorado": 1, "mes_entrega": "2026-05"}
+
+    def test_dias_entre_con_fraccion(self):
+        assert reglas.dias_entre(utc(2026, 1, 1), utc(2026, 1, 2, 12)) == 1.5
+
 
 class TestTramos:
     def validar(self, medio="MARITIMO", vehiculo="BUQUE", salida=utc(2026, 5, 1),
@@ -218,9 +229,6 @@ class TestPrediccion:
     def test_envio_vencido_tiene_probabilidad_uno(self):
         assert reglas.probabilidad_demora(0, 0, 0, vencido=True) == 1.0
 
-    def test_tasa_de_demora(self):
-        assert reglas.tasa_demora(2, 1) == 0.5
-        assert reglas.tasa_demora(0, 0) == 0.0
 
 
 class TestUbicacionYCarga:

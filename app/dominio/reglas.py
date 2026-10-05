@@ -192,6 +192,20 @@ def envio_demorado(estado: str, fecha_estimada: datetime | None,
     return fecha_estimada < ahora
 
 
+def dias_entre(desde: datetime, hasta: datetime) -> float:
+    return round((hasta - desde).total_seconds() / 86400, 2)
+
+
+def metricas_de_entrega(fecha_creacion: datetime, fecha_entrega_estimada: datetime | None,
+                        fecha_entrega_real: datetime) -> dict:
+    tarde = fecha_entrega_estimada is not None and fecha_entrega_real > fecha_entrega_estimada
+    return {
+        "dias_entrega": dias_entre(fecha_creacion, fecha_entrega_real),
+        "demorado": 1 if tarde else 0,
+        "mes_entrega": periodo_de(fecha_entrega_real),
+    }
+
+
 def ruta(codigo_origen: str, codigo_destino: str) -> str:
     return f"{codigo_origen}-{codigo_destino}"
 
@@ -225,10 +239,6 @@ def tramo_vigente(tramos: list[dict], momento: datetime) -> dict | None:
     if not iniciados:
         return None
     return max(iniciados, key=lambda tramo: tramo["orden"])
-
-
-def tasa_demora(entregados: int, demorados: int) -> float:
-    return 0.0 if entregados == 0 else demorados / entregados
 
 
 def riesgo_operativo(incidentes_abiertos: int, alertas_abiertas: int) -> float:

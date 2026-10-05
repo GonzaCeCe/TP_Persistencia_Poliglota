@@ -34,10 +34,9 @@ class ServicioPrediccion:
         predicciones = []
         for envio in self._doc.envios_activos():
             ruta = reglas.ruta(envio["origen"]["codigo"], envio["destino"]["codigo"])
-            entregados, demorados = demoras_por_ruta.get(ruta, (0, 0))
+            entregados, tasa = demoras_por_ruta.get(ruta, (0, 0.0))
             incidentes = incidentes_abiertos.get(envio["_id"], 0)
             alertas = sum(alertas_abiertas.get(c["id"], 0) for c in envio["contenedores"])
-            tasa = reglas.tasa_demora(entregados, demorados)
             operativo = reglas.riesgo_operativo(incidentes, alertas)
             climatico = self._clima.riesgo_climatico(envio)
             vencido = envio["fecha_entrega_estimada"] is not None and envio["fecha_entrega_estimada"] < momento

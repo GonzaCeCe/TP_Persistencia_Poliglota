@@ -81,7 +81,10 @@ const ESQUEMAS = {
       },
       facturado: { bsonType: 'bool' },
       factura_id: ENTERO_O_NULO,
-      grafo_sincronizado: { bsonType: 'bool' }
+      grafo_sincronizado: { bsonType: 'bool' },
+      dias_entrega: { bsonType: 'number', minimum: 0 },
+      demorado: { bsonType: 'int', enum: [0, 1] },
+      mes_entrega: { bsonType: 'string', pattern: '^\\d{4}-(0[1-9]|1[0-2])$' }
     }
   },
 

@@ -15,7 +15,8 @@ Contenido:
 5. [Desafío de complejidad adicional](#5-desafío-de-complejidad-adicional)
 6. [Decisiones, supuestos y atributos agregados](#6-decisiones-supuestos-y-atributos-agregados)
 7. [Mejoras propuestas para producción](#7-mejoras-propuestas-para-producción)
-8. [Anexo: requisitos, opciones de menú y servicios](#8-anexo-requisitos-opciones-de-menú-y-servicios)
+8. [Herramientas fuera del temario](#8-herramientas-fuera-del-temario)
+9. [Anexo: requisitos, opciones de menú y servicios](#9-anexo-requisitos-opciones-de-menú-y-servicios)
 
 ---
 
@@ -58,6 +59,7 @@ flowchart TB
 - Idempotencia por claves únicas.
 - *Optimistic concurrency* al agregar tramos.
 - *Pessimistic locking* (`FOR UPDATE`) en reservas y pagos.
+- Operaciones idempotentes y reconciliación en lugar de transacciones multi-documento de MongoDB.
 
 **Manejo de errores.** Las excepciones propias son `ErrorNegocio`, `NoEncontrado`, `IntegridadError` y
 `NoAutorizado`. Los repositorios traducen las violaciones de cada motor:
@@ -106,9 +108,9 @@ Es idempotente. Cada script también se puede ejecutar por separado (ver `README
 
 1. `main.registrar_envio` pide los datos y llama a `ServicioOperativa.registrar_envio`.
 2. El servicio exige nivel OPERADOR y valida las ubicaciones (UN/LOCODE) en el dominio.
-3. Abre una transacción de PostgreSQL, bloquea el cliente (`FOR SHARE`) y los contenedores (`FOR UPDATE`
-   ordenado por id), y verifica que estén DISPONIBLE y que el volumen entre en la capacidad. Después los
-   marca EN_USO.
+3. Abre una transacción de PostgreSQL, verifica que el cliente esté ACTIVO, bloquea los contenedores
+   (`FOR UPDATE` ordenado por id) y verifica que estén DISPONIBLE y que el volumen entre en la
+   capacidad. Después los marca EN_USO.
 4. Dentro de ese mismo bloque obtiene el id del envío del contador de MongoDB e inserta el documento.
 5. Si algo falla, PostgreSQL hace rollback y el servicio borra el documento de MongoDB (compensación).
 6. Con el commit hecho, proyecta el envío a Neo4j. Si Neo4j falla, el envío queda con
@@ -135,11 +137,11 @@ clave-valor.
 
 | Aspecto | Detalle |
 |---|---|
-| Tipo | Documental (BSON), con colecciones *time series*. |
-| Casos de uso | Envíos con tramos embebidos, lecturas IoT (time series), eventos logísticos, incidentes, alertas, mensajes, grupos, reportes y predicciones. |
-| Ventajas | El envío se lee y escribe como una unidad: tramos, contenedores y snapshots en un solo documento. Esquema flexible con validación `$jsonSchema`. *Aggregation pipeline* para todos los reportes analíticos (`$group`, `$dateDiff`, `$unwind`). Colección time series optimizada para lecturas por sensor y tiempo. Transacciones multi-documento en replica set. Sharding nativo para escalar horizontalmente. |
-| Desventajas | Sin joins eficientes: los datos que se comparten se copian (snapshots) y hay que aceptar que no se actualicen. Las transacciones multi-documento tienen costo y requieren replica set. Las colecciones time series no aceptan validador ni escrituras dentro de transacciones. |
-| Justificación técnica | El envío es un agregado jerárquico que crece por etapas (tramos, último evento, marcas de facturación) y se consulta entero. Los eventos, lecturas y mensajes crecen sin límite y se consultan por clave y rango de tiempo, que es justo lo que resuelven bien los índices compuestos y las time series. |
+| Tipo | Documental (BSON). |
+| Casos de uso | Envíos con tramos embebidos, lecturas IoT, eventos logísticos, incidentes, alertas, mensajes, grupos, reportes y predicciones. |
+| Ventajas | El envío se lee y escribe como una unidad: tramos, contenedores y snapshots en un solo documento. Esquema flexible con validación `$jsonSchema`. *Aggregation pipeline* básico (`$match`, `$group`, `$sort`, `$unwind`) para los reportes. Índices compuestos para lecturas por sensor y por contenedor en el tiempo. `updateOne` condicional, `$inc` e índices únicos para operaciones idempotentes. Replica set con `w: majority` y sharding nativo. |
+| Desventajas | Sin joins eficientes: los datos que se comparten se copian (snapshots) y hay que aceptar que no se actualicen. Sin transacciones entre documentos (no se usan): la consistencia entre el envío y sus eventos o incidentes se logra con operaciones idempotentes y reconciliación. |
+| Justificación técnica | El envío es un agregado jerárquico que crece por etapas (tramos, último evento, marcas de facturación) y se consulta entero. Los eventos, lecturas y mensajes crecen sin límite y se consultan por clave y rango de tiempo, que es justo lo que resuelven bien los índices compuestos `{sensor_id, fecha_hora}` y `{contenedor_id, fecha_hora}`. |
 
 ### 2.3 Neo4j 5 Community
 
@@ -165,7 +167,7 @@ clave-valor.
 
 **Tabular / columnar (Cassandra).** Sería el candidato natural para la ingesta masiva de lecturas IoT:
 escrituras muy rápidas, escalado lineal y consistencia ajustable. Se descartó por simplificación:
-- con el volumen del TP, la colección time series de MongoDB cubre el caso con un motor menos;
+- con el volumen del TP, una colección de MongoDB con índices compuestos cubre el caso con un motor menos;
 - Cassandra exige diseñar una tabla por consulta;
 - no tiene transacciones entre particiones;
 - sumarla obligaría a otra sincronización sin aportar una consulta nueva.
@@ -330,7 +332,7 @@ erDiagram
 | rol | Datos fijos ADMIN = 5, OPERADOR = 3, CLIENTE = 1; `nivel_permisos` entre 1 y 5 |
 | sesion | `fecha_fin ≥ fecha_inicio`; `(estado = 'ACTIVA') = (fecha_fin IS NULL)` |
 | contenedor | Código ISO 6346 `^[A-Z]{4}\d{7}$` único; `capacidad_m3 > 0`; `temp_min < temp_max` |
-| cuenta_corriente | `num_nonnulls(cliente_id, empresa_id) = 1` (exactamente un titular); cada titular, único |
+| cuenta_corriente | `(cliente_id IS NULL) <> (empresa_id IS NULL)` (exactamente un titular); cada titular, único |
 | factura_item | `envio_id UNIQUE`: un envío se factura una sola vez (llave de idempotencia) |
 | pago, movimiento_cc | Montos e importes `> 0`; tipo DEBE / HABER; medio de pago enumerado |
 | cierre_cc | PK `(cuenta_id, periodo)`; `saldo_final = saldo_inicial + total_debe − total_haber` |
@@ -356,8 +358,8 @@ erDiagram
 ### 3.2 MongoDB
 
 Base `logistica`, replica set `rs0`, `writeConcern: majority` y `readConcern: majority` en el cliente.
-Todas las colecciones tienen validación `$jsonSchema` estricta, salvo `lecturas` (ver D10 en las
-decisiones). Los ids son enteros secuenciales (colección `contadores`, `findOneAndUpdate` con `$inc`),
+Todas las colecciones tienen validación `$jsonSchema` estricta. No se usan transacciones
+multi-documento (ver D22). Los ids son enteros secuenciales (colección `contadores`, `findOneAndUpdate` con `$inc`),
 salvo en mensajes, lecturas y eventos, que usan `ObjectId`.
 
 **Embeber o referenciar.**
@@ -399,10 +401,20 @@ salvo en mensajes, lecturas y eventos, que usan `ObjectId`.
 }
 ```
 
-`lecturas` (time series: `timeField: fecha_hora`, `metaField: meta`, `granularity: minutes`):
+Cuando un envío pasa a ENTREGADO, el mismo `updateOne` que cambia el estado guarda tres campos calculados
+en `dominio/reglas.py` (`metricas_de_entrega`), que usan los reportes. Por ejemplo, en el envío 2,
+entregado tarde:
 
 ```json
-{"meta": {"sensor_id": 1, "contenedor_id": 1}, "fecha_hora": {"$date": "2026-09-06T14:00:00Z"},
+"fecha_entrega_real": {"$date": "2026-05-04T11:00:00Z"},
+"dias_entrega": 28.04, "demorado": 1, "mes_entrega": "2026-05"
+```
+
+`lecturas` (colección común con campos planos; obligatorios `sensor_id`, `contenedor_id` y `fecha_hora`,
+medidas opcionales con rangos validados):
+
+```json
+{"_id": {"$oid": "..."}, "sensor_id": 1, "contenedor_id": 1, "fecha_hora": {"$date": "2026-09-06T14:00:00Z"},
  "temperatura": 9.8, "humedad": 85.0, "lat": -28.5, "lon": -47.8, "bateria": 90.0}
 ```
 
@@ -477,8 +489,8 @@ salvo en mensajes, lecturas y eventos, que usan `ObjectId`.
 | envios | `{contenedores.id, estado}` | Envío activo de un contenedor (anomalías, sensores inactivos); historial del contenedor |
 | envios | parcial `{estado, fecha_entrega_real}` donde `facturado: false` | Envíos a facturar: el índice solo contiene los pendientes |
 | envios | `{grafo_sincronizado}` | Resincronizar los envíos pendientes |
-| lecturas | `{meta.sensor_id, fecha_hora}` | Historial de un sensor por rango de fechas |
-| lecturas | `{meta.contenedor_id, fecha_hora}` | Recorrido GPS y GeoJSON de un contenedor |
+| lecturas | `{sensor_id: 1, fecha_hora: -1}` | Historial de un sensor por rango de fechas |
+| lecturas | `{contenedor_id: 1, fecha_hora: 1}` | Recorrido GPS y GeoJSON de un contenedor |
 | eventos | **único** `{envio_id, fecha_hora, tipo}` | Impide duplicar un evento reintentado; historial de un envío |
 | eventos | `{contenedor_ids, fecha_hora}` | Historial de movimientos de un contenedor |
 | incidentes | `{estado, fecha}` | Incidentes abiertos |
@@ -499,8 +511,12 @@ shard keys con el criterio de la cátedra (cardinalidad, frecuencia y cambio mon
 | `{_id: "hashed"}` | Alta | Uniforme | No monótona: el hash distribuye las inserciones | Distribuye bien, pero la consulta más frecuente (envíos de un cliente) se vuelve *scatter-gather* a todos los shards. Descartada |
 | **`{cliente.id: 1, _id: 1}`** | Alta: el `_id` desempata dentro del cliente y evita *jumbo chunks* | Un cliente muy grande se reparte en varios chunks gracias al segundo campo | El prefijo `cliente.id` reparte las inserciones entre clientes; la monotonía queda acotada a cada cliente | **Elegida**: las consultas por cliente van a un solo shard (*targeted*) |
 
-Para `lecturas` se propone `{meta.sensor_id: 1, fecha_hora: 1}`: MongoDB permite shardear time series por
-campos del `metaField`, y es la clave de todas las consultas por sensor.
+Para `lecturas` se propone `{sensor_id: 1, fecha_hora: 1}`: es la clave de las consultas por sensor y el
+prefijo `sensor_id` reparte las inserciones entre sensores, así la fecha monótona no concentra todo en un
+solo chunk.
+
+No hay índice sobre `mes_entrega`: el reporte de desempeño agrupa por ese campo, pero filtra por
+`fecha_entrega_real`, y un `$group` sin filtro no usa índices.
 
 ### 3.3 Neo4j
 
@@ -572,8 +588,10 @@ Siguiendo la clasificación de la cátedra:
 
 ### 4.2 Configuración usada y quórum
 
-MongoDB corre como replica set de **un nodo**. Se usa solo para habilitar transacciones multi-documento;
-no aporta tolerancia a fallos. El cliente usa `w: "majority"` y `readConcern: "majority"`. En un replica set
+MongoDB corre como replica set de **un nodo**, con `w: "majority"`. Se mantiene por la replicación y la
+configuración de quórum vistas en clase; **ya no se usa para transacciones multi-documento**, que el
+sistema no utiliza. Con un solo nodo no hay tolerancia a fallos real: el análisis siguiente es para el
+replica set de producción. El cliente usa `w: "majority"` y `readConcern: "majority"`. En un replica set
 de producción de **3 nodos**:
 
 | Parámetro | Valor | Significado |
@@ -620,7 +638,7 @@ Cassandra es **AP** con consistencia ajustable (ONE, QUORUM, ALL por operación)
 Cómo se cubre en teoría con lo que hay:
 - Los dispositivos retienen y reintentan sus lecturas (*buffer* en el borde).
 - La deduplicación posterior es posible porque cada lectura se identifica por sensor y momento.
-- La ingesta escala con sharding de `lecturas` por `{meta.sensor_id, fecha_hora}`.
+- La ingesta escala con sharding de `lecturas` por `{sensor_id, fecha_hora}`.
 - Si el volumen lo justificara, se agregaría Cassandra solo para lecturas: partición `(sensor_id, día)`,
   clustering por `fecha_hora DESC`. Ver el capítulo 7.
 
@@ -641,7 +659,7 @@ tablas:
 
 Agregados que crecen y se leen enteros, y datos voluminosos por tiempo:
 - envíos con tramos embebidos y snapshots;
-- lecturas IoT (time series);
+- lecturas IoT (colección con índices por sensor y por contenedor);
 - eventos logísticos, incidentes y alertas;
 - mensajes y grupos;
 - reportes generados y predicciones.
@@ -656,14 +674,14 @@ comparten operador e impacto de una ubicación.
 
 | Operación | Estrategia |
 |---|---|
-| Registrar envío (PostgreSQL + MongoDB) | Se abre la transacción de PostgreSQL: se verifica el cliente (`FOR SHARE`) y se reservan los contenedores (`FOR UPDATE` ordenado por id, para no generar *deadlocks*). Dentro de ese bloque se inserta en MongoDB. Ante cualquier error: rollback en PostgreSQL y **borrado compensatorio** en MongoDB. |
-| Registrar evento | **Transacción multi-documento** de MongoDB: insert en `eventos` y update del envío solo si el evento es más nuevo que `ultimo_evento`. Si el estado pasa a ENTREGADO, se liberan los contenedores en PostgreSQL con un UPDATE idempotente (`WHERE estado = 'EN_USO'`). |
-| Registrar incidente | Transacción multi-documento: insert del incidente y `$inc` de `cantidad_incidentes`. |
+| Registrar envío (PostgreSQL + MongoDB) | Se abre la transacción de PostgreSQL: se verifica que el cliente esté activo y se reservan los contenedores (`FOR UPDATE` ordenado por id, para no generar *deadlocks*). Dentro de ese bloque se inserta en MongoDB. Ante cualquier error: rollback en PostgreSQL y **borrado compensatorio** en MongoDB. |
+| Registrar evento | Tres pasos que se pueden reintentar, sin transacción: (1) insert en `eventos`; si da clave duplicada (índice único `{envio_id, fecha_hora, tipo}`) es un reintento y se sigue; (2) `updateOne` condicional del envío, solo si el evento es más nuevo que `ultimo_evento`; al pasar a ENTREGADO guarda también `dias_entrega`, `demorado` y `mes_entrega`; (3) si el envío quedó ENTREGADO con este evento como último, se liberan en PostgreSQL los contenedores que no estén en otro envío activo (UPDATE idempotente `WHERE estado = 'EN_USO'`). |
+| Registrar incidente | Insert del incidente y después `$inc` de `cantidad_incidentes`, sin transacción. Si el proceso se corta entre los dos, el control de integridad corrige el contador. |
 | Proyección a Neo4j | Síncrona después de cada cambio. La escritura en MongoDB pone `grafo_sincronizado = false` en la misma operación; si la proyección funciona, vuelve a `true`. Si Neo4j falla, la operación principal no se cancela, se registra un warning y "Resincronizar grafo" reproyecta los pendientes con `MERGE` (o reconstruye todo). |
 | Facturación | Primero **reconcilia**: los envíos que ya tienen ítem en PostgreSQL se vuelven a marcar en MongoDB. Después, una transacción de PostgreSQL por cliente (factura + ítems + DEBE del cliente + HABER de cada operador). Recién después se marca en MongoDB. `factura_item.envio_id UNIQUE` hace imposible facturar dos veces. |
 | Sesiones | Primero PostgreSQL (historial ACTIVA), después Redis. "Reconciliar sesiones" marca EXPIRADA toda sesión ACTIVA en PostgreSQL que ya no tenga clave en Redis. |
 | Lecturas | Primero MongoDB (fuente de verdad), después Redis (heartbeat, última lectura y GEO). |
-| Control de integridad | Verifica tres cosas: saldo de cada cuenta = Σ movimientos; importe de cada factura = Σ ítems; todo envío facturado en MongoDB tiene su ítem en PostgreSQL. |
+| Control de integridad | Verifica cuatro cosas: saldo de cada cuenta = Σ movimientos; importe de cada factura = Σ ítems; todo envío facturado en MongoDB tiene su ítem en PostgreSQL; `cantidad_incidentes` de cada envío = cantidad real de incidentes (`count_documents`), corrigiendo el contador si difiere. |
 
 ### 5.5 y 5.6 Problemas de consistencia y estrategias
 
@@ -671,33 +689,64 @@ comparten operador e impacto de una ubicación.
 |---|---|---|
 | Escritura en dos motores sin transacción distribuida | Al registrar un envío se reserva el contenedor en PostgreSQL y se inserta el envío en MongoDB. Si el commit de PostgreSQL falla, queda un envío "huérfano" en Mongo. | Saga simple con compensación: el insert en MongoDB ocurre dentro del bloque transaccional de PostgreSQL y, ante cualquier excepción, se borra el documento. Verificado forzando una falla después del insert. |
 | Escritura en dos motores (facturación) | Se confirma la factura en PostgreSQL y el proceso se corta antes de marcar los envíos como facturados en MongoDB. | Reconciliación al inicio de cada facturación más `factura_item.envio_id UNIQUE`. Volver a ejecutar no duplica, solo corrige la marca (test de integración). |
-| Reintentos duplicados | Un dispositivo reenvía el evento "ENTREGADO" porque no recibió confirmación; una alerta se repite con cada lectura fuera de rango; un administrador corre dos veces el cierre o la predicción. | Índice único `{envio_id, fecha_hora, tipo}` en eventos; índice único parcial `{sensor_id, tipo}` para alertas abiertas; `ON CONFLICT DO NOTHING` en el cierre; upsert por `{envio_id, dia}` en predicciones; `MERGE` en Neo4j. |
+| Reintentos duplicados | Un dispositivo reenvía el evento "ENTREGADO" porque no recibió confirmación; una alerta se repite con cada lectura fuera de rango; un administrador corre dos veces el cierre o la predicción. | Índice único `{envio_id, fecha_hora, tipo}` en eventos; índice único parcial `{sensor_id, tipo}` para alertas abiertas; en el cierre, verificación previa más la clave primaria `(cuenta_id, periodo)`, que rechaza un segundo cierre; upsert por `{envio_id, dia}` en predicciones; `MERGE` en Neo4j. |
 | Eventos fuera de orden | El evento "ADUANA" del día 9 llega después de "ENTREGADO" del día 11 (o una lectura vieja llega tarde). | El update del envío exige `ultimo_evento.fecha_hora < nueva fecha`: el evento viejo queda en el historial pero no retrocede el estado. En Redis, la última lectura y la posición GEO solo se reemplazan si la lectura es más nueva. |
 | Grafo atrasado | Neo4j está caído cuando se agrega un tramo. | `grafo_sincronizado = false` se escribe en la misma operación de MongoDB; la opción "Ruta completa" avisa si el envío está pendiente; "Resincronizar grafo" lo repara. El driver no reintenta, para no bloquear la consola. |
-| Contador de incidentes desincronizado | Se inserta el incidente pero falla el `$inc` de `cantidad_incidentes`, y el promedio de incidentes queda mal. | Insert e incremento en la misma transacción multi-documento de MongoDB. |
+| Contador de incidentes desincronizado | Se inserta el incidente pero falla el `$inc` de `cantidad_incidentes`, y el promedio de incidentes queda mal. | Reconciliación: el control de integridad compara el contador con `count_documents` de sus incidentes, lo corrige y lo registra en el log. |
+| Corte a mitad de registrar un evento | El evento quedó insertado pero el envío no cambió de estado ni se liberaron los contenedores. | Idempotencia: el reintento detecta la clave duplicada, sigue con el `updateOne` condicional y la liberación (ejemplo debajo de la tabla). |
 | Pérdida de datos en Redis | Redis se reinicia y pierde el último segundo (AOF `everysec`) o todo el estado en memoria. | Nada en Redis es fuente de verdad. Sesiones: el usuario vuelve a ingresar y "Reconciliar sesiones" marca EXPIRADA las de PostgreSQL sin clave. Heartbeat: el sensor puede aparecer como inactivo y se reactiva solo con la próxima lectura. Última lectura y posición: se reponen con la próxima lectura y el historial completo está en MongoDB. |
 | Doble reserva de contenedor | Dos operadores registran al mismo tiempo envíos con el mismo contenedor. | `SELECT ... FOR UPDATE` ordenado por id: la segunda transacción espera, ve el contenedor EN_USO y se rechaza (test de integración). |
 | Pagos concurrentes | Dos cajeros registran a la vez un pago por el saldo total de la misma factura. | `SELECT ... FOR UPDATE` sobre la factura: el segundo pago espera, recalcula el pendiente y se rechaza por exceder el saldo (test de integración del exceso). |
 | Tramos concurrentes | Dos operadores agregan el tramo 2 del mismo envío a la vez. | Control optimista: el `$push` exige que el envío siga teniendo la cantidad de tramos leída (`tramos: {$size: n}`); si no, se pide reintentar. |
 | Movimiento en un período cerrado | Se registra un pago con fecha de un mes que ya tiene cierre, y el cierre queda desactualizado. | Facturas y pagos se rechazan si su período ya tiene cierre mensual. |
 
+**Ejemplo de falla y recuperación (verificado).** Al registrar el evento ENTREGADO del envío 3, el proceso
+se corta después del paso 1: el evento ya está en `eventos`, pero el envío sigue EN_TRANSITO y el
+contenedor sigue EN_USO.
+
+1. El operador repite la operación con los mismos datos.
+2. El insert en `eventos` da clave duplicada: se reconoce como reintento, se registra en el log y se sigue.
+3. El `updateOne` condicional sí aplica, porque el envío todavía no tiene ese evento como último: el envío
+   queda ENTREGADO, con `dias_entrega`, `demorado` y `mes_entrega`.
+4. Como el envío quedó ENTREGADO con este evento como último, se libera el contenedor en PostgreSQL.
+5. Resultado: un solo evento ENTREGADO, estado correcto y contenedor DISPONIBLE.
+
+Si el reintento llega cuando todo ya se había aplicado, no cambia nada. El contenedor solo se libera si no
+está reservado por otro envío activo (test de integración).
+
+Con el contador de incidentes pasa algo parecido. Si se inserta el incidente pero el `$inc` no llega a
+ejecutarse, `cantidad_incidentes` queda en 0 aunque haya un incidente. El **control de integridad** compara
+el contador con `count_documents` de `incidentes`, lo corrige y lo registra en el log (test de integración:
+un contador alterado a 99 vuelve al valor real).
+
+**Bloqueos.** `SELECT ... FOR UPDATE` se usa solo en dos lugares, con el criterio de "bloqueos y
+granularidad" de la Clase 1: se bloquean **filas**, no tablas, y solo donde dos operaciones concurrentes
+pueden pisarse.
+- **Reserva de contenedores:** bloqueo de las filas de los contenedores, ordenado por id para evitar
+  *deadlocks*.
+- **Pago:** bloqueo de la fila de la factura.
+
+En las cuentas corrientes no hace falta: `UPDATE cuenta_corriente SET saldo = saldo + x` ya es atómico.
+
 ---
 
 ## 6. Decisiones, supuestos y atributos agregados
 
-Las decisiones completas, con su justificación, están en [`decisiones.md`](decisiones.md) (D1 a D20). Las
+Las decisiones completas, con su justificación, están en [`decisiones.md`](decisiones.md) (D1 a D23). Las
 de mayor impacto:
 
 - **D1.** La lista de motores obligatorios del enunciado (página 8) está vacía en el PDF entregado; se
   cumplen los tres paradigmas mínimos con cuatro motores.
 - **D2.** "Máximo 3 registros por entidad" aplica a lo que se carga a mano; eventos y lecturas, 3 por
   envío o por sensor; lo que generan los procesos, sin límite.
-- **D10.** `lecturas` es time series y MongoDB 7 no admite validador en ese tipo de colección: se valida
-  en el dominio.
+- **D10.** `lecturas` es una colección común con `$jsonSchema` e índices compuestos (antes era *time
+  series*; se reemplazó por estar fuera del temario).
 - **D11.** `incidente.ruta` es la ruta del envío (origen-destino), la misma unidad que usa la predicción.
 - **D13.** Rol CLIENTE ⇔ `cliente_id`; el alcance se filtra en los servicios.
 - **D14.** Se agrega "cancelar envío" (estado CANCELADO) y se valida la continuidad de los tramos.
 - **D16.** Convención de saldo: Σ DEBE − Σ HABER. No se registran movimientos en períodos cerrados.
+- **D21 a D23.** Reportes con pipeline básico y campos calculados al entregar; sin transacciones
+  multi-documento (idempotencia y reconciliación); SQL estándar con `FOR UPDATE` solo en reservas y pagos.
 - **D17.** Marca `grafo_sincronizado` en la misma escritura y driver de Neo4j sin reintentos.
 
 **Predicción de atrasos.** Es una heurística documentada, **no** un modelo de *machine learning*:
@@ -745,7 +794,7 @@ riesgo climático = ProveedorClima.riesgo_climatico(envío) → 0 (no hay fuente
 4. **Cassandra para IoT a gran escala**: tabla `lecturas_por_sensor` con partición `(sensor_id, dia)` y
    clustering `fecha_hora DESC`, escrita con `ONE` y leída con `QUORUM`. MongoDB conservaría el resto.
 5. **Sharding** de `envios` con `{cliente.id: 1, _id: 1}` y de `lecturas` con
-   `{meta.sensor_id: 1, fecha_hora: 1}`. Replica set de 3 nodos en zonas distintas. Redis con Sentinel o
+   `{sensor_id: 1, fecha_hora: 1}`. Replica set de 3 nodos en zonas distintas. Redis con Sentinel o
    Cluster.
 6. **Autenticación más robusta**: autenticación y TLS en MongoDB (keyfile o x.509) y en Redis (ACL),
    secretos en un gestor (Vault), bloqueo por intentos fallidos, expiración de contraseñas, MFA para
@@ -755,9 +804,31 @@ riesgo climático = ProveedorClima.riesgo_climatico(envío) → 0 (no hay fuente
 8. **Fuente climática real** detrás de la interfaz `ProveedorClima` y, con historia suficiente, un modelo
    estadístico entrenado para la probabilidad de demora.
 
+## 8. Herramientas fuera del temario
+
+El proyecto se ajustó para que todo lo que usa se pueda defender con lo visto en clase. Se reemplazaron:
+- las colecciones *time series*, por una colección común con índices compuestos;
+- las transacciones multi-documento de MongoDB, por idempotencia con índices únicos, `updateOne`
+  condicional, `$inc` y reconciliación;
+- los operadores avanzados del pipeline, por campos calculados al entregar el envío;
+- el SQL no estándar (`FOR SHARE`, `ON CONFLICT`, `FILTER`, `LATERAL`, `array_agg`, `num_nonnulls`).
+
+Lo que se sigue usando sin estar en las filminas, con su justificación:
+
+| Herramienta | Por qué se mantiene |
+|---|---|
+| *Aggregation pipeline* básico (`$match`, `$group`, `$sort`, `$unwind`; `$sum`, `$avg`, `$min`, `$max`, `$first`) | Agrupar en la base evita traer todos los documentos a Python: la cátedra plantea el procesamiento en el cliente como último recurso. Cada etapa equivale a una cláusula SQL (WHERE, GROUP BY, ORDER BY). Cada pipeline está explicado en [`guia_agregaciones.md`](guia_agregaciones.md). |
+| Validación `$jsonSchema` | El enunciado pide restricciones en cada modelo físico; en MongoDB se declaran así, igual que los `CHECK` y `NOT NULL` de SQL. |
+| Índices parciales | Son índices comunes con un filtro: "una sola alerta ABIERTA por sensor y tipo", "solo los envíos sin facturar", "sesiones ACTIVA", "un HABER por envío y cuenta". Implementan reglas de negocio e idempotencia en la base. |
+| Redis GEO | Lo exige la visualización geográfica (contenedores dentro de un radio); sin GEO habría que traer todas las posiciones y calcular distancias en Python. |
+| Redis pub/sub | Monitor de alertas en tiempo real; la alternativa sería consultar la base en un bucle. |
+| Redis TTL | Modela "sesión que vence por inactividad" y "sensor que dejó de reportar" sin procesos de limpieza. |
+| Docker Compose | Levanta los cuatro motores con versiones fijas y un solo comando, para que la aplicación funcione igual en cualquier máquina el día de la defensa. |
+| Detalles de PostgreSQL que se conservan | `RETURNING id` para obtener la clave generada, `CREATE ... IF NOT EXISTS` para que el script se pueda ejecutar dos veces, `~` (expresión regular) en los `CHECK` de CUIT, código ISO y período, y `= ANY(%s)`, que es la forma de pasar listas con psycopg 3. |
+
 ---
 
-## 8. Anexo: requisitos, opciones de menú y servicios
+## 9. Anexo: requisitos, opciones de menú y servicios
 
 Rutas de menú con el formato *Submenú > Opción*. Nivel mínimo: C = cliente, O = operador, A = admin.
 
@@ -808,8 +879,8 @@ Tipos de reporte (`reportes.solicitar_reporte`):
 | Envíos por país de destino, por estado, por cliente | `envios_por_pais`, `envios_por_estado`, `envios_por_cliente` | MongoDB `$group` |
 | Envíos demorados | `envios_demorados` | MongoDB |
 | Incidentes abiertos | `incidentes_abiertos` | MongoDB |
-| Tiempos máximo, mínimo y promedio por cliente | `tiempos_por_cliente` | MongoDB `$dateDiff` |
-| Tiempo promedio de entrega | `tiempo_promedio_entrega` | MongoDB `$dateDiff` |
+| Tiempos máximo, mínimo y promedio por cliente | `tiempos_por_cliente` | MongoDB `$group` con `$max`/`$min`/`$avg` de `dias_entrega` |
+| Tiempo promedio de entrega | `tiempo_promedio_entrega` | MongoDB `$group` con `$avg` de `dias_entrega` |
 | Promedio de incidentes por país, estado, cliente | `incidentes_por_pais`, `incidentes_por_estado`, `incidentes_por_cliente` | MongoDB |
 | Costos por tipo de transporte | `costos_por_transporte` | MongoDB `$unwind` |
 | Ranking de rutas con más incidentes | `ranking_rutas_incidentes` | MongoDB |

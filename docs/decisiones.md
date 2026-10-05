@@ -69,12 +69,16 @@ ocurrido antes de cargarlo.
 
 La capa `ui` es `app/main.py`, con una función por submenú, siguiendo la estructura de carpetas fijada.
 
-## D10. `lecturas` sin validador `$jsonSchema`
+## D10. `lecturas` como colección común
 
-MongoDB 7 rechaza un `validator` en colecciones time series (`'timeseries' is not allowed with
-'validator'`). Como `lecturas` debe ser time series, es la única colección sin `$jsonSchema`: su estructura
-y rangos (humedad y batería entre 0 y 100, latitud entre −90 y 90, longitud entre −180 y 180) se validan
-en `dominio/reglas.py` antes de insertar. El resto de las colecciones sí tiene validador.
+`lecturas` es una colección común con campos planos (`sensor_id`, `contenedor_id`, `fecha_hora` y las
+medidas), validador `$jsonSchema` (obligatorios `sensor_id`, `contenedor_id` y `fecha_hora`; medidas
+opcionales con rangos) e índices compuestos `{sensor_id: 1, fecha_hora: -1}` (histórico de un sensor) y
+`{contenedor_id: 1, fecha_hora: 1}` (recorrido de un contenedor). El dominio también valida los rangos
+antes de insertar.
+
+Al principio era una colección *time series*, que en MongoDB 7 no admite validador. Se reemplazó porque las
+time series no se vieron en la materia; así todas las colecciones quedan con `$jsonSchema`.
 
 ## D11. Ruta de un incidente
 
@@ -173,3 +177,62 @@ cargados. Lo mismo ocurre con las sesiones: el login del administrador que hace 
 `python -m app.datos_prueba` se niega a correr si ya hay usuarios y muestra cómo recrear las bases
 (`docker compose down -v`, `up -d`, `inicializar`, `datos_prueba`). Se prefirió eso a un borrado desde la
 aplicación: no existe ningún camino de código que vacíe las bases, y los IDs vuelven a empezar en 1.
+
+## D21. Reportes con aggregation pipeline básico
+
+Los reportes usan solo `$match`, `$group`, `$sort` y `$unwind` (y `$limit` si hiciera falta), con
+`$sum`, `$avg`, `$min`, `$max` y `$first`. No se usan `$dateDiff`, `$dateToString`, `$cond`, `$expr`,
+`$project` con cálculos, `$lookup` ni `$facet`.
+
+- Al pasar un envío a ENTREGADO, `reglas.metricas_de_entrega` calcula `dias_entrega`, `demorado` (0/1) y
+  `mes_entrega` (`AAAA-MM`), y se guardan en el mismo `updateOne` que cambia el estado. Son opcionales en
+  el validador porque solo existen en los entregados.
+- Envíos demorados es un `find` con `$or` (en curso y vencido, o `demorado: 1`).
+- La tasa de demora de una ruta es `$avg` de `demorado` (el promedio de un 0/1 es una proporción).
+- Renombrar `_id`, redondear y calcular porcentajes se hace en Python sobre el resultado ya agrupado.
+- "Mis conversaciones" toma el último mensaje con `$sort` + `$first` de cada campo, sin `$$ROOT`.
+- No hay índice `{mes_entrega: 1}`: ningún reporte filtra por ese campo.
+
+Cada pipeline, con su equivalente SQL, está en `docs/guia_agregaciones.md`.
+
+## D22. Sin transacciones multi-documento de MongoDB
+
+Se reemplazan por operaciones idempotentes y reconciliación:
+
+- **Registrar evento.** (1) Insert en `eventos`: si el índice único `{envio_id, fecha_hora, tipo}` da clave
+  duplicada, es un reintento; se registra en el log y se sigue. (2) `updateOne` condicional del envío
+  (solo si el evento es más nuevo que `ultimo_evento`). (3) Si el envío quedó ENTREGADO con este evento
+  como último, se liberan los contenedores.
+  - La fecha del evento se trunca a milisegundos, la precisión que guarda MongoDB, para poder comparar con
+    el `ultimo_evento` guardado.
+  - Al liberar, se excluyen los contenedores que ya estén en otro envío activo, porque un reintento tardío
+    no debe liberar un contenedor reservado por otro envío.
+  - Registrar el mismo evento dos veces no lo duplica: la segunda vez devuelve `duplicado = true` y la
+    consola lo informa.
+- **Registrar incidente.** Insert y después `$inc`. Si el `$inc` no llega a ejecutarse, el control de
+  integridad compara `cantidad_incidentes` con `count_documents` de los incidentes del envío, corrige el
+  contador y lo registra en el log.
+- **Replica set.** Se mantienen el replica set y `w: majority`: se vieron en clase y siguen justificados
+  por la replicación, aunque ya no se usan para transacciones.
+
+## D23. SQL estándar
+
+- `SELECT ... FOR UPDATE` solo en la reserva de contenedores y en el bloqueo de la factura al pagar
+  ("bloqueos y granularidad", Clase 1). Se quitó de las cuentas corrientes (`UPDATE saldo = saldo + x` ya
+  es atómico) y se quitó el `FOR SHARE` del cliente al registrar un envío. Queda una ventana mínima en la
+  que un cliente podría darse de baja mientras se registra su envío; se acepta por simplicidad.
+- Sin `ON CONFLICT`:
+  - Asignar un rol ya asignado se verifica antes y no hace nada.
+  - Cerrar un período ya cerrado devuelve un error de negocio ("El período AAAA-MM ya está cerrado"). Si
+    dos cierres corren a la vez, la clave primaria `(cuenta_id, periodo)` rechaza el segundo y se traduce
+    al mismo error.
+  - Consecuencia: una cuenta creada después de cerrar un mes no recibe el cierre de ese mes. Su próximo
+    cierre parte igual del saldo correcto, porque suma sus movimientos previos.
+- `FILTER (WHERE ...)` pasa a `SUM(CASE WHEN ... THEN ... ELSE 0 END)`; `CROSS JOIN LATERAL`, a
+  subconsultas escalares; `array_agg ... FILTER`, a una segunda consulta simple con los roles del usuario.
+- En `scripts/postgres.sql`:
+  - la carga de roles usa `INSERT ... SELECT ... WHERE NOT EXISTS` en lugar de `ON CONFLICT`;
+  - el titular de la cuenta corriente se valida con `CHECK ((cliente_id IS NULL) <> (empresa_id IS NULL))`
+    en lugar de `num_nonnulls`.
+- Se mantienen `= ANY(%s)` (forma correcta de pasar listas con psycopg 3), `RETURNING id`,
+  `CREATE ... IF NOT EXISTS` y `~` en los `CHECK`.

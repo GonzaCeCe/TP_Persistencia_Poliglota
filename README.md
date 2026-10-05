@@ -5,6 +5,7 @@ Trabajo Práctico de Ingeniería de Datos II (UADE). Aplicación de consola en P
 
 - Informe técnico (arquitectura, justificación, modelos físicos, CAP, consistencia): [`docs/informe_tecnico.md`](docs/informe_tecnico.md)
 - Decisiones y supuestos: [`docs/decisiones.md`](docs/decisiones.md)
+- Guía de agregaciones de MongoDB, con su equivalente SQL (estudio para la defensa): [`docs/guia_agregaciones.md`](docs/guia_agregaciones.md)
 - Enunciado: [`docs/TP_Persistencia_Poliglota.pdf`](docs/TP_Persistencia_Poliglota.pdf)
 
 ## Requisitos

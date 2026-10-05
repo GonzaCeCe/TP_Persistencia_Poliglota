@@ -817,7 +817,7 @@ def ingresar(app: Aplicacion) -> SesionActiva | None:
     print("  1. Ingresar\n  0. Salir")
     if input("  Opción: ").strip() != "1":
         return None
-    return app.auth.login(pedir_texto("Email"), leer_secreto("  Contraseña: "))
+    return app.auth.login(pedir_texto("Email").removeprefix("mailto:"), leer_secreto("  Contraseña: "))
 
 
 def sesion_de_trabajo(app: Aplicacion, sesion: SesionActiva) -> None:

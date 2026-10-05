@@ -97,10 +97,8 @@ class RepositorioRelacional:
             "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
             (razon_social, cuit, email, telefono, direccion, pais))["id"]
 
-    def obtener_cliente(self, cliente_id: int, bloquear: bool = False) -> dict:
-        bloqueo = " FOR SHARE" if bloquear else ""
-        return self._uno_obligatorio(f"Cliente {cliente_id}",
-                                     "SELECT * FROM cliente WHERE id = %s" + bloqueo, (cliente_id,))
+    def obtener_cliente(self, cliente_id: int) -> dict:
+        return self._uno_obligatorio(f"Cliente {cliente_id}", "SELECT * FROM cliente WHERE id = %s", (cliente_id,))
 
     def listar_clientes(self) -> list[dict]:
         return self._todos("SELECT * FROM cliente ORDER BY id")
@@ -144,9 +142,6 @@ class RepositorioRelacional:
             "FROM cuenta_corriente cc LEFT JOIN cliente c ON c.id = cc.cliente_id "
             "LEFT JOIN empresa e ON e.id = cc.empresa_id ORDER BY cc.id")
 
-    def bloquear_cuentas(self, cuenta_ids: list[int]) -> None:
-        self._todos("SELECT id FROM cuenta_corriente WHERE id = ANY(%s) ORDER BY id FOR UPDATE", (cuenta_ids,))
-
     def registrar_movimiento(self, cuenta_id: int, fecha: date, tipo: str, importe: Decimal, descripcion: str,
                              factura_id: int | None = None, pago_id: int | None = None,
                              envio_id: int | None = None) -> None:
@@ -172,31 +167,32 @@ class RepositorioRelacional:
         return self._ejecutar(
             f"""
             INSERT INTO cierre_cc (cuenta_id, periodo, saldo_inicial, total_debe, total_haber, saldo_final)
-            SELECT c.id, %(periodo)s, s.inicial, m.debe, m.haber, s.inicial + m.debe - m.haber
-            FROM cuenta_corriente c
-            CROSS JOIN LATERAL (
-                SELECT COALESCE(
-                    (SELECT saldo_final FROM cierre_cc WHERE cuenta_id = c.id AND periodo = %(anterior)s),
-                    (SELECT COALESCE(SUM({SALDO_FIRMADO}), 0) FROM movimiento_cc
-                      WHERE cuenta_id = c.id AND fecha < %(inicio)s)
-                ) AS inicial
-            ) s
-            CROSS JOIN LATERAL (
-                SELECT COALESCE(SUM(importe) FILTER (WHERE tipo = 'DEBE'), 0) AS debe,
-                       COALESCE(SUM(importe) FILTER (WHERE tipo = 'HABER'), 0) AS haber
-                FROM movimiento_cc
-                WHERE cuenta_id = c.id AND fecha >= %(inicio)s AND fecha < %(fin)s
-            ) m
-            ON CONFLICT (cuenta_id, periodo) DO NOTHING
+            SELECT t.cuenta_id, %(periodo)s, t.inicial, t.debe, t.haber, t.inicial + t.debe - t.haber
+            FROM (
+                SELECT c.id AS cuenta_id,
+                       COALESCE(
+                           (SELECT saldo_final FROM cierre_cc WHERE cuenta_id = c.id AND periodo = %(anterior)s),
+                           (SELECT COALESCE(SUM({SALDO_FIRMADO}), 0) FROM movimiento_cc
+                             WHERE cuenta_id = c.id AND fecha < %(inicio)s)
+                       ) AS inicial,
+                       (SELECT COALESCE(SUM(CASE WHEN tipo = 'DEBE' THEN importe ELSE 0 END), 0) FROM movimiento_cc
+                         WHERE cuenta_id = c.id AND fecha >= %(inicio)s AND fecha < %(fin)s) AS debe,
+                       (SELECT COALESCE(SUM(CASE WHEN tipo = 'HABER' THEN importe ELSE 0 END), 0) FROM movimiento_cc
+                         WHERE cuenta_id = c.id AND fecha >= %(inicio)s AND fecha < %(fin)s) AS haber
+                FROM cuenta_corriente c
+            ) t
             """,
             {"periodo": periodo, "anterior": periodo_anterior, "inicio": inicio, "fin": fin}).rowcount
 
     # Usuarios, roles y sesiones
 
-    _USUARIO_CON_ROLES = (
-        "SELECT u.*, COALESCE(array_agg(r.descripcion ORDER BY r.id) FILTER (WHERE r.id IS NOT NULL), '{}') "
-        "AS roles, COALESCE(max(r.nivel_permisos), 0) AS nivel "
-        "FROM usuario u LEFT JOIN usuario_rol ur ON ur.usuario_id = u.id LEFT JOIN rol r ON r.id = ur.rol_id ")
+    def _con_roles(self, usuario: dict | None) -> dict | None:
+        if usuario is None:
+            return None
+        roles = self._todos("SELECT r.descripcion, r.nivel_permisos FROM usuario_rol ur JOIN rol r ON r.id = ur.rol_id "
+                            "WHERE ur.usuario_id = %s ORDER BY r.id", (usuario["id"],))
+        return {**usuario, "roles": [rol["descripcion"] for rol in roles],
+                "nivel": max((rol["nivel_permisos"] for rol in roles), default=0)}
 
     def insertar_usuario(self, cliente_id: int | None, nombre: str, apellido: str, email: str,
                          password_hash: str, fecha_registro: datetime) -> int:
@@ -207,18 +203,20 @@ class RepositorioRelacional:
 
     def asignar_rol(self, usuario_id: int, rol: str) -> None:
         rol_id = self._uno_obligatorio(f"Rol {rol}", "SELECT id FROM rol WHERE descripcion = %s", (rol,))["id"]
-        self._ejecutar("INSERT INTO usuario_rol (usuario_id, rol_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                       (usuario_id, rol_id))
+        ya_asignado = self._uno("SELECT 1 AS asignado FROM usuario_rol WHERE usuario_id = %s AND rol_id = %s",
+                                (usuario_id, rol_id))
+        if ya_asignado is None:
+            self._ejecutar("INSERT INTO usuario_rol (usuario_id, rol_id) VALUES (%s, %s)", (usuario_id, rol_id))
 
     def obtener_usuario(self, usuario_id: int) -> dict:
-        return self._uno_obligatorio(f"Usuario {usuario_id}",
-                                     self._USUARIO_CON_ROLES + "WHERE u.id = %s GROUP BY u.id", (usuario_id,))
+        return self._con_roles(self._uno_obligatorio(f"Usuario {usuario_id}",
+                                                     "SELECT * FROM usuario WHERE id = %s", (usuario_id,)))
 
     def buscar_usuario_por_email(self, email: str) -> dict | None:
-        return self._uno(self._USUARIO_CON_ROLES + "WHERE u.email = %s GROUP BY u.id", (email,))
+        return self._con_roles(self._uno("SELECT * FROM usuario WHERE email = %s", (email,)))
 
     def listar_usuarios(self) -> list[dict]:
-        return self._todos(self._USUARIO_CON_ROLES + "GROUP BY u.id ORDER BY u.id")
+        return [self._con_roles(usuario) for usuario in self._todos("SELECT * FROM usuario ORDER BY id")]
 
     def cambiar_estado_usuario(self, usuario_id: int, estado: str) -> None:
         self._uno_obligatorio(f"Usuario {usuario_id}",

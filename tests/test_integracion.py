@@ -152,12 +152,24 @@ def test_contador_de_incidentes_alterado_se_detecta_y_corrige(app, admin):
     assert app.comercial.control_integridad(admin)["contadores_de_incidentes_corregidos"] == []
 
 
-def test_cierre_mensual_es_idempotente(app, admin):
-    app.comercial.cierre_mensual(admin, "2026-08")
+def test_cerrar_un_periodo_ya_cerrado_devuelve_error_de_negocio(app, admin):
     cierres_antes = _contar(app, "cierre_cc")
 
-    assert app.comercial.cierre_mensual(admin, "2026-08") == 0
+    with pytest.raises(ErrorNegocio, match="ya está cerrado"):
+        app.comercial.cierre_mensual(admin, "2026-08")
+
     assert _contar(app, "cierre_cc") == cierres_antes
+
+
+def test_asignar_un_rol_ya_asignado_no_falla_ni_duplica(app, admin):
+    operador = next(u for u in app.auth.listar_usuarios(admin) if "OPERADOR" in u["roles"])
+    asignaciones_antes = _contar(app, "usuario_rol")
+
+    app.auth.asignar_rol(admin, operador["id"], "OPERADOR")
+
+    assert _contar(app, "usuario_rol") == asignaciones_antes
+    actual = next(u for u in app.auth.listar_usuarios(admin) if u["id"] == operador["id"])
+    assert actual["roles"] == operador["roles"]
 
 
 def test_operacion_de_admin_rechazada_para_cliente(app, usuario_cliente):

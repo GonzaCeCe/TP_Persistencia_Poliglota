@@ -644,8 +644,7 @@ def facturar_periodo(app, sesion):
 
 
 def cierre_mensual(app, sesion):
-    ok(f"{app.comercial.cierre_mensual(sesion, pedir_texto('Período (AAAA-MM)'))} cuentas cerradas "
-       "(0 = el período ya estaba cerrado)")
+    ok(f"{app.comercial.cierre_mensual(sesion, pedir_texto('Período (AAAA-MM)'))} cuentas cerradas")
 
 
 def detectar_sensores_inactivos(app, sesion):

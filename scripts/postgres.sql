@@ -6,11 +6,12 @@ CREATE TABLE IF NOT EXISTS rol (
     nivel_permisos  SMALLINT NOT NULL CHECK (nivel_permisos BETWEEN 1 AND 5)
 );
 
-INSERT INTO rol (id, descripcion, nivel_permisos) VALUES
-    (1, 'ADMIN', 5),
-    (2, 'OPERADOR', 3),
-    (3, 'CLIENTE', 1)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO rol (id, descripcion, nivel_permisos)
+SELECT 1, 'ADMIN', 5 WHERE NOT EXISTS (SELECT 1 FROM rol WHERE id = 1);
+INSERT INTO rol (id, descripcion, nivel_permisos)
+SELECT 2, 'OPERADOR', 3 WHERE NOT EXISTS (SELECT 1 FROM rol WHERE id = 2);
+INSERT INTO rol (id, descripcion, nivel_permisos)
+SELECT 3, 'CLIENTE', 1 WHERE NOT EXISTS (SELECT 1 FROM rol WHERE id = 3);
 
 CREATE TABLE IF NOT EXISTS cliente (
     id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS cuenta_corriente (
     empresa_id           INTEGER UNIQUE REFERENCES empresa (id),
     saldo                NUMERIC(14, 2) NOT NULL DEFAULT 0,
     fecha_actualizacion  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CHECK (num_nonnulls(cliente_id, empresa_id) = 1)
+    CHECK ((cliente_id IS NULL) <> (empresa_id IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS factura (

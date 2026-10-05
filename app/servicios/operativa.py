@@ -172,7 +172,7 @@ class ServicioOperativa:
         envio_id = None
         try:
             with self._rel.transaccion():
-                cliente = self._cliente_activo_bloqueado(cliente_id)
+                cliente = self._cliente_activo(cliente_id)
                 contenedores = self._reservar_contenedores(sorted(set(contenedor_ids)))
                 reglas.validar_carga(peso_kg, volumen_m3, [c["capacidad_m3"] for c in contenedores])
                 envio_id = self._doc.siguiente_id("envios")
@@ -196,8 +196,8 @@ class ServicioOperativa:
         if not contenedor_ids:
             raise ErrorNegocio("El envío necesita al menos un contenedor")
 
-    def _cliente_activo_bloqueado(self, cliente_id: int) -> dict:
-        cliente = self._rel.obtener_cliente(cliente_id, bloquear=True)
+    def _cliente_activo(self, cliente_id: int) -> dict:
+        cliente = self._rel.obtener_cliente(cliente_id)
         if cliente["estado"] != "ACTIVO":
             raise ErrorNegocio(f"El cliente {cliente['razon_social']} está {cliente['estado']}")
         return cliente

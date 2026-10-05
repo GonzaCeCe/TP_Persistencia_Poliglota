@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.dominio import reglas
-from app.infra.errores import ErrorNegocio
+from app.infra.errores import ErrorNegocio, IntegridadError
 from app.repositorios.documental import RepositorioDocumental
 from app.repositorios.relacional import RepositorioRelacional
 from app.servicios.auth import NIVEL_ADMIN, NIVEL_OPERADOR, SesionActiva, requerir_nivel
@@ -82,7 +82,6 @@ class ServicioComercial:
             cuenta_cliente = self._rel.obtener_cuenta(cliente_id=cliente_id)["id"]
             cuentas_operador = {operador_id: self._rel.obtener_cuenta(empresa_id=operador_id)["id"]
                                 for operador_id, _ in costos_operador}
-            self._rel.bloquear_cuentas([cuenta_cliente, *cuentas_operador.values()])
             factura_id = self._rel.insertar_factura(cliente_id, periodo, emision, total)
             for envio_id, importe in importes.items():
                 self._rel.insertar_item(factura_id, envio_id, importe)
@@ -140,8 +139,14 @@ class ServicioComercial:
     def cierre_mensual(self, sesion: SesionActiva, periodo: str, hoy: date | None = None) -> int:
         requerir_nivel(sesion, NIVEL_ADMIN)
         self._validar_periodo_terminado(periodo, hoy)
-        cerradas = self._rel.cerrar_periodo(periodo, reglas.periodo_anterior(periodo), reglas.inicio_periodo(periodo),
-                                            reglas.inicio_periodo_siguiente(periodo))
+        ya_cerrado = f"El período {periodo} ya está cerrado"
+        if self._rel.existe_cierre(periodo):
+            raise ErrorNegocio(ya_cerrado)
+        try:
+            cerradas = self._rel.cerrar_periodo(periodo, reglas.periodo_anterior(periodo),
+                                                reglas.inicio_periodo(periodo), reglas.inicio_periodo_siguiente(periodo))
+        except IntegridadError as error:
+            raise ErrorNegocio(ya_cerrado) from error
         log.info("Cierre mensual %s: %s cuentas cerradas", periodo, cerradas)
         return cerradas
 

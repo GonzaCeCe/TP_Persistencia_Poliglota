@@ -431,7 +431,7 @@ def contenedores_cercanos(app, sesion):
 
 
 def estado_sensores(app, sesion):
-    mostrar_tabla([{**s, "codigo": s["codigo_internacional"], "ultima": s["ultima_lectura"].get("fecha_hora", "")[:16],
+    mostrar_tabla([{**s, "codigo": s["codigo_internacional"], "ultima": s["ultima_lectura"].get("fecha_hora", "")[:16].replace("T", " "),
                     "temperatura": s["ultima_lectura"].get("temperatura"), "bateria": s["ultima_lectura"].get("bateria")}
                    for s in app.monitoreo.estado_sensores(sesion)],
                   ["id", "tipo", "contenedor_id", "codigo", "estado", "reportando", "ultima", "temperatura", "bateria"])
@@ -561,7 +561,8 @@ def monitor_de_alertas(app, sesion):
     try:
         for alerta in app.monitoreo.escuchar_alertas(sesion):
             print(f"  [{alerta['fecha'][:19]}] ALERTA {alerta['_id']} {alerta['tipo']} sensor {alerta['sensor_id']} "
-                  f"contenedor {alerta['contenedor_id']} envío {alerta['envio_id']} valor {alerta['valor']}")
+                  f"contenedor {formatear(alerta['contenedor_id'])} envío {formatear(alerta['envio_id'])} "
+                  f"valor {formatear(alerta['valor'])}")
     except KeyboardInterrupt:
         print("\n  Monitor detenido.")
 
@@ -776,6 +777,8 @@ def ejecutar(app: Aplicacion, sesion: SesionActiva, accion: Accion) -> SesionAct
         accion(app, sesion)
     except KeyboardInterrupt:
         print("\n  Operación cancelada.")
+    except EOFError:
+        raise
     except ErrorAplicacion as error:
         print(f"  {type(error).__name__}: {error}")
     except Exception:
@@ -839,7 +842,7 @@ def main() -> None:
                 if sesion is None:
                     return
                 sesion_de_trabajo(app, sesion)
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, EOFError):
                 print("\n  Hasta luego.")
                 return
             except ErrorAplicacion as error:

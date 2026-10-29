@@ -42,12 +42,17 @@ Con el entorno virtual activado, los mismos comandos sirven en los dos sistemas:
 ```
 docker compose up -d               # levanta las 4 bases
 python -m app.inicializar          # crea los esquemas e inicia el replica set de MongoDB
+python -m app.verificar_conexiones # opcional: prueba la conexión a las 4 bases
 python -m app.datos_prueba         # carga los datos de prueba usando los servicios
 python -m app.main                 # aplicación de consola
 ```
 
 `app.inicializar` espera a que los contenedores estén saludables, ejecuta los scripts de `scripts/` e inicia
 el replica set `rs0` si hace falta. Se puede ejecutar más de una vez.
+
+`app.verificar_conexiones` se conecta a cada base desde la máquina, con los datos de `.env`, e informa
+"conectado correctamente" o el error de cada una. Termina con código 1 si alguna falla. Los contenedores se
+llaman `tp_postgres`, `tp_mongo`, `tp_neo4j` y `tp_redis`.
 
 Cada script también se puede ejecutar por separado (valores de `.env.example`):
 
@@ -131,7 +136,7 @@ scripts/            postgres.sql  mongo_init.js  neo4j.cypher
 app/
   main.py           menú de consola (capa ui)
   ensamblado.py     inyección de dependencias
-  config.py  inicializar.py  datos_prueba.py  simulador_iot.py
+  config.py  inicializar.py  verificar_conexiones.py  datos_prueba.py  simulador_iot.py
   infra/            conexiones, logs, errores
   dominio/          reglas.py (reglas puras, sin drivers)
   repositorios/     relacional, documental, grafo, clave_valor

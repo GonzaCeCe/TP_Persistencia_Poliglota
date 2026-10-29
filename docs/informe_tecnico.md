@@ -90,6 +90,7 @@ source .venv/bin/activate                 # Windows: .\.venv\Scripts\Activate.ps
 pip install -r requirements.txt
 docker compose up -d                      # levanta las 4 bases
 python -m app.inicializar                 # scripts de creación + replica set
+python -m app.verificar_conexiones        # opcional: prueba la conexión a las 4 bases
 python -m app.datos_prueba                # datos de prueba, cargados con los servicios
 python -m app.main                        # aplicación
 python -m app.simulador_iot --sensores 1,2 --intervalo 5   # opcional, en otra terminal

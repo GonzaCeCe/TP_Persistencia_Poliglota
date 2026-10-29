@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16
+    container_name: tp_postgres
     environment:
       POSTGRES_DB: ${PG_DB}
       POSTGRES_USER: ${PG_USER}
@@ -17,7 +18,8 @@ services:
       retries: 20
 
   mongo:
-    image: mongo:7
+    image: mongo:7.0
+    container_name: tp_mongo
     command: ["--replSet", "${MONGO_REPLICA_SET}", "--bind_ip_all", "--port", "${MONGO_PORT}"]
     ports:
       - "127.0.0.1:${MONGO_PORT}:${MONGO_PORT}"
@@ -31,7 +33,8 @@ services:
       retries: 20
 
   neo4j:
-    image: neo4j:5-community
+    image: neo4j:5.26-community
+    container_name: tp_neo4j
     environment:
       NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
     ports:
@@ -47,7 +50,8 @@ services:
       retries: 30
 
   redis:
-    image: redis:7
+    image: redis:7.4
+    container_name: tp_redis
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
       - "127.0.0.1:${REDIS_PORT}:6379"

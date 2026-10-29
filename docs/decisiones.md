@@ -236,3 +236,23 @@ Se reemplazan por operaciones idempotentes y reconciliación:
     en lugar de `num_nonnulls`.
 - Se mantienen `= ANY(%s)` (forma correcta de pasar listas con psycopg 3), `RETURNING id`,
   `CREATE ... IF NOT EXISTS` y `~` en los `CHECK`.
+
+## D24. Integración del entorno de la otra parte del grupo (`TP_Logistica-main`)
+
+La carpeta traía `compose.yaml`, `requirements.txt`, `.env.example`, `.gitignore` y `test_conexiones.py`. Se
+unificó con los archivos del proyecto, en lugar de dejar dos configuraciones en paralelo:
+- **Imágenes con versión fija:** `mongo:7.0`, `neo4j:5.26-community` y `redis:7.4`. Coinciden con las
+  versiones que ya corrían, así que los volúmenes se reutilizan. Redis queda en 7.4 y no en 7.2: los
+  archivos AOF que escribe la 7.4 usan un formato de RDB que la 7.2 no lee, y Redis no arrancaría.
+- **Contenedores:** se llaman `tp_postgres`, `tp_mongo`, `tp_neo4j` y `tp_redis`.
+- **Librerías:** `pymongo` pasa a 4.19.0 y `neo4j` a 6.4.1. No se agregan `pytz`, `tzdata`, `dnspython` ni
+  `typing_extensions`: el código no las usa y pip instala las que hacen falta como dependencias.
+- **`.gitignore`:** se suman `.env.*` (salvo `.env.example`) y `.vscode/`.
+- **`test_conexiones.py`** pasa a `app/verificar_conexiones.py` (`python -m app.verificar_conexiones`). Usa
+  `.env` y las conexiones de la aplicación, así prueba lo mismo que va a usar la app, incluido el replica
+  set. Tiene otro nombre para que pytest no lo tome como test.
+- **Se mantiene lo del proyecto donde había diferencias:**
+  - PostgreSQL 16, del stack definido. La otra carpeta usaba la 17, y los datos de un volumen de la 16 no
+    los abre la 17.
+  - Usuario `logistica` y variables `PG_*` (la otra carpeta usaba `tp_user` y `POSTGRES_PASSWORD`).
+  - El replica set `rs0` y los healthchecks, que usan la aplicación y `app.inicializar`.

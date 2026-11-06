@@ -1,6 +1,8 @@
+
+import argparse
 import logging
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.ensamblado import Aplicacion, crear_aplicacion
@@ -20,6 +22,26 @@ BUENOS_AIRES = {"codigo": "ARBUE", "ciudad": "Buenos Aires", "pais": "AR"}
 MENDOZA = {"codigo": "ARMDZ", "ciudad": "Mendoza", "pais": "AR"}
 SANTOS = {"codigo": "BRSSZ", "ciudad": "Santos", "pais": "BR"}
 NUEVA_YORK = {"codigo": "USNYC", "ciudad": "Nueva York", "pais": "US"}
+
+CORDOBA = {"codigo": "ARCOR", "ciudad": "Córdoba", "pais": "AR"}
+LA_PLATA = {"codigo": "ARLPG", "ciudad": "La Plata", "pais": "AR"}
+BAHIA_BLANCA = {"codigo": "ARBHI", "ciudad": "Bahía Blanca", "pais": "AR"}
+SANTA_FE = {"codigo": "ARSFN", "ciudad": "Santa Fe", "pais": "AR"}
+MAR_DEL_PLATA = {"codigo": "ARMDQ", "ciudad": "Mar del Plata", "pais": "AR"}
+NEUQUEN = {"codigo": "ARNQN", "ciudad": "Neuquén", "pais": "AR"}
+SALTA = {"codigo": "ARSLA", "ciudad": "Salta", "pais": "AR"}
+TUCUMAN = {"codigo": "ARTUC", "ciudad": "San Miguel de Tucumán", "pais": "AR"}
+
+CLIENTES_ADICIONALES = [
+    ("Distribuidora del Norte SA", "30-90000001-1", "distribuidora.norte@example.com", CORDOBA, BUENOS_AIRES),
+    ("Alimentos Patagónicos SRL", "30-90000002-2", "alimentos.patagonicos@example.com", NEUQUEN, BAHIA_BLANCA),
+    ("Tecnología Austral SA", "30-90000003-3", "tecnologia.austral@example.com", BUENOS_AIRES, CORDOBA),
+    ("Exportadora del Plata SA", "30-90000004-4", "exportadora.plata@example.com", ROSARIO, LA_PLATA),
+    ("Industrias Córdoba SRL", "30-90000005-5", "industrias.cordoba@example.com", CORDOBA, SANTA_FE),
+    ("Agroexportaciones Pampeanas SA", "30-90000006-6", "agro.pampeanas@example.com", SANTA_FE, ROSARIO),
+    ("Textiles del Litoral SRL", "30-90000007-7", "textiles.litoral@example.com", TUCUMAN, SALTA),
+    ("Equipamientos Andinos SA", "30-90000008-8", "equipamientos.andinos@example.com", MENDOZA, CORDOBA),
+]
 
 
 def utc(mes: int, dia: int, hora: int = 0) -> datetime:
@@ -102,6 +124,84 @@ def cargar_envio_vencido(app: Aplicacion, adm: SesionActiva, ids: dict) -> int:
     return envio
 
 
+def completar_clientes(app: Aplicacion, adm: SesionActiva) -> None:
+    op = app.operativa
+    clientes = {c["cuit"]: c for c in op.listar_clientes(adm)}
+    contenedores = {c["codigo_internacional"]: c for c in op.listar_contenedores(adm)}
+    envios_por_cliente = {}
+
+    for envio in op.listar_envios(adm):
+        if envio["contenedores"]:
+            envios_por_cliente.setdefault(envio["cliente"]["id"], []).append(envio)
+
+    camion = next(
+        (v for v in op.listar_vehiculos(adm) if v["tipo"] == "CAMION" and v["estado"] == "ACTIVO"),
+        None,
+    )
+    if camion is None:
+        raise RuntimeError("No hay ningún camión activo para cargar los envíos de prueba")
+
+    for numero, (razon_social, cuit, email, origen, destino) in enumerate(CLIENTES_ADICIONALES, start=1):
+        telefono = f"+54 11 4000-{numero:04d}"
+        cliente = clientes.get(cuit)
+        if cliente is None:
+            cliente_id = op.alta_cliente(
+                adm, razon_social, cuit, email, telefono,
+                f"Domicilio de prueba, {origen['ciudad']}", "AR",
+            )
+        else:
+            cliente_id = cliente["id"]
+
+        if cliente_id in envios_por_cliente:
+            print(f"{razon_social}: ya tiene un envío con contenedor")
+            continue
+
+        codigo = f"CLTE{numero:07d}"
+        contenedor = contenedores.get(codigo)
+        if contenedor is None:
+            contenedor_id = op.alta_contenedor(
+                adm, codigo, "DRY", Decimal("33"), Decimal("-10"), Decimal("50")
+            )
+            op.alta_sensor(adm, "GPS", "Garmin", contenedor_id, utc(10, 1))
+        else:
+            contenedor_id = contenedor["id"]
+
+        inicio = utc(10, 1, 8) + timedelta(days=(numero - 1) * 3)
+        envio_id = op.registrar_envio(
+            adm, cliente_id, origen, destino, "MEDIA", 3200, 18,
+            [contenedor_id], inicio,
+        )
+        op.agregar_tramo(
+            adm, envio_id, "TERRESTRE", origen, destino, camion["id"],
+            inicio + timedelta(hours=2), inicio + timedelta(days=2), Decimal("1500"),
+        )
+        app.trazabilidad.registrar_evento(
+            adm, envio_id, "CARGA_INICIADA", origen["codigo"],
+            "Carga de mercadería preparada", inicio + timedelta(hours=1),
+        )
+        app.trazabilidad.registrar_evento(
+            adm, envio_id, "EN_TRANSITO", origen["codigo"],
+            "Camión en ruta", inicio + timedelta(hours=3),
+        )
+        if numero <= 4:
+            app.trazabilidad.registrar_evento(
+                adm, envio_id, "ENTREGADO", destino["codigo"],
+                "Mercadería entregada", inicio + timedelta(days=2),
+            )
+        print(f"{razon_social}: cliente {cliente_id}, contenedor {contenedor_id}, envío {envio_id}")
+
+    clientes_finales = op.listar_clientes(adm)
+    envios_finales = op.listar_envios(adm)
+    ids_con_contenedor = {
+        e["cliente"]["id"] for e in envios_finales if e["contenedores"]
+    }
+    faltantes = [c["razon_social"] for c in clientes_finales if c["id"] not in ids_con_contenedor]
+    print(f"Total de clientes: {len(clientes_finales)}")
+    print(f"Clientes con envío y contenedor: {len(ids_con_contenedor)}")
+    if faltantes:
+        print("Clientes sin envío con contenedor: " + ", ".join(faltantes))
+
+
 def cargar_comunicacion(app: Aplicacion, adm: SesionActiva, ids: dict, envio_vencido: int) -> None:
     app.mensajeria.enviar_privado(adm, ids["operador"],
                                   f"Revisá la alerta de temperatura del envío {envio_vencido}, por favor.", utc(9, 6, 15))
@@ -137,12 +237,27 @@ def cargar(app: Aplicacion) -> None:
     cargar_comunicacion(app, adm, ids, envio_vencido)
     cargar_facturacion(app, adm)
     ejecutar_procesos(app, adm)
+    completar_clientes(app, adm)
     app.auth.logout(adm)
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--completar", action="store_true")
+    args = parser.parse_args()
     app = crear_aplicacion()
     try:
+        if args.completar:
+            if not app.auth.hay_usuarios():
+                print("No existen usuarios. Primero ejecutá python -m app.datos_prueba")
+                sys.exit(1)
+            adm = app.auth.login(USUARIOS[0][1], USUARIOS[0][2])
+            try:
+                completar_clientes(app, adm)
+            finally:
+                app.auth.logout(adm)
+            print("Carga complementaria terminada")
+            return
         if app.auth.hay_usuarios():
             print("Las bases ya tienen datos. Para cargarlos de nuevo desde cero:\n"
                   "  docker compose down -v\n  docker compose up -d\n"
@@ -159,9 +274,10 @@ def main() -> None:
         sys.exit(1)
     finally:
         app.cerrar()
-    print("Datos de prueba cargados. Usuarios:")
-    for rol, email, password in USUARIOS:
-        print(f"  {rol:<28} {email:<34} {password}")
+    if not args.completar:
+        print("Datos de prueba cargados. Usuarios:")
+        for rol, email, password in USUARIOS:
+            print(f"  {rol:<28} {email:<34} {password}")
 
 
 if __name__ == "__main__":

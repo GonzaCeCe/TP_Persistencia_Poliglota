@@ -63,6 +63,73 @@ services:
       timeout: 5s
       retries: 20
 
+  init_postgres:
+    image: postgres:16
+    profiles: ["app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${PG_PASSWORD}
+    volumes:
+      - ./scripts:/scripts:ro
+    command: ["psql", "-h", "postgres", "-U", "${PG_USER}", "-d", "${PG_DB}", "-v", "ON_ERROR_STOP=1", "-q",
+              "-f", "/scripts/postgres.sql"]
+
+  init_mongo:
+    image: mongo:7.0
+    profiles: ["app"]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_PORT: ${MONGO_PORT}
+      MONGO_DB: ${MONGO_DB}
+      MONGO_REPLICA_SET: ${MONGO_REPLICA_SET}
+    volumes:
+      - ./scripts:/scripts:ro
+    entrypoint: ["sh", "/scripts/iniciar_mongo.sh"]
+
+  init_neo4j:
+    image: neo4j:5.26-community
+    profiles: ["app"]
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/scripts:ro
+    entrypoint: ["cypher-shell", "-a", "bolt://neo4j:7687", "-u", "${NEO4J_USER}", "-p", "${NEO4J_PASSWORD}",
+                 "-f", "/scripts/neo4j.cypher"]
+
+  app:
+    build: .
+    image: tp_app
+    profiles: ["app"]
+    depends_on:
+      init_postgres:
+        condition: service_completed_successfully
+      init_mongo:
+        condition: service_completed_successfully
+      init_neo4j:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      MONGO_HOST: mongo
+      MONGO_PORT: ${MONGO_PORT}
+      NEO4J_HOST: neo4j
+      NEO4J_BOLT_PORT: "7687"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      LOG_ARCHIVO: salidas/logistica.log
+    volumes:
+      - ./salidas:/app/salidas
+    stdin_open: true
+    tty: true
+
 volumes:
   pg_datos:
   mongo_datos:

@@ -256,3 +256,25 @@ unificó con los archivos del proyecto, en lugar de dejar dos configuraciones en
     los abre la 17.
   - Usuario `logistica` y variables `PG_*` (la otra carpeta usaba `tp_user` y `POSTGRES_PASSWORD`).
   - El replica set `rs0` y los healthchecks, que usan la aplicación y `app.inicializar`.
+
+## D25. Aplicación en Docker
+
+- La aplicación tiene imagen propia (`Dockerfile`, `python:3.11-slim`) y servicio `app` en el compose. Está
+  en el perfil `app` para que `docker compose up -d` siga levantando solo las bases, y se usa con
+  `docker compose run --rm app` porque la consola necesita una terminal interactiva.
+- `app.inicializar` usa `docker compose exec`, que no existe dentro de un contenedor. Se reemplaza en Docker
+  por tres contenedores de un solo uso (`init_postgres`, `init_mongo`, `init_neo4j`) que corren los mismos
+  scripts con la herramienta de cada base. La app arranca solo cuando los tres terminaron bien. Correr la
+  app desde la máquina con `python -m app.inicializar` sigue funcionando igual.
+- **MongoDB con conexión directa (`directConnection=True`).** El miembro del replica set está registrado
+  como `localhost:27018`. Sin conexión directa, el driver toma esa dirección de la configuración del
+  replica set, y desde el contenedor de la app `localhost` es la propia app y no Mongo. Con conexión directa
+  usa la dirección configurada (`mongo` en Docker, `127.0.0.1` en la máquina). Como el replica set tiene un
+  solo nodo, no se pierde nada:
+  - el nodo es siempre el primario;
+  - `w: majority` y `readConcern: majority` siguen igual;
+  - el driver sigue verificando el nombre `rs0`.
+- **Variables de entorno.** El contenedor lee el mismo `.env`. El compose pisa los hosts y los puertos con
+  los nombres y puertos internos de la red de Docker (`postgres:5432`, `mongo`, `neo4j:7687`, `redis:6379`).
+- **Salidas.** Los reportes, los GeoJSON y el log van a `salidas/`, que se monta desde el proyecto, así no se
+  pierden al terminar el contenedor.

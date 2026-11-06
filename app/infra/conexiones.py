@@ -19,6 +19,7 @@ class Conexiones:
             host=config.mongo_host,
             port=config.mongo_port,
             replicaSet=config.mongo_replica_set,
+            directConnection=True,
             tz_aware=True,
             w="majority",
             readConcernLevel="majority",

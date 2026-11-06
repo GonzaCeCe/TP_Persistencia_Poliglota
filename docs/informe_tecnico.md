@@ -105,6 +105,28 @@ pytest -m "not integracion"               # solo unitarios, sin bases
 
 Es idempotente. Cada script también se puede ejecutar por separado (ver `README.md`).
 
+**Todo en Docker, sin Python en la máquina.** Solo hace falta el `.env`. La aplicación tiene su imagen
+(`Dockerfile`) y el servicio `app` del compose, en el perfil `app`. Por eso `docker compose up -d` sigue
+levantando solo las bases.
+
+```bash
+docker compose run --rm app                                   # aplicación de consola
+docker compose run --rm app python -m app.datos_prueba        # datos de prueba
+docker compose run --rm app python -m app.simulador_iot --sensores 1,2 --intervalo 5
+docker compose run --rm app python -m pytest                  # tests
+docker compose run --rm app python -m app.verificar_conexiones
+```
+
+Cada `docker compose run` levanta las bases si no están levantadas y, antes de la aplicación, corre tres
+contenedores de un solo uso que hacen lo mismo que `app.inicializar`:
+- `init_postgres` ejecuta `scripts/postgres.sql` con `psql`;
+- `init_mongo` inicia el replica set y ejecuta `scripts/mongo_init.js` (`scripts/iniciar_mongo.sh`);
+- `init_neo4j` ejecuta `scripts/neo4j.cypher` con `cypher-shell`.
+
+Los tres son idempotentes. Los reportes, los GeoJSON y el log (`salidas/logistica.log`) quedan en la
+carpeta `salidas/` del proyecto. La imagen se reconstruye después de cambiar el código con
+`docker compose build app`.
+
 ### 1.3 Recorrido de una operación: registrar un envío
 
 1. `main.registrar_envio` pide los datos y llama a `ServicioOperativa.registrar_envio`.

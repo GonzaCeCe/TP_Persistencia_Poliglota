@@ -119,6 +119,31 @@ class ServicioComercial:
         log.info("Pago %s de %s sobre la factura %s: queda %s", pago_id, monto, factura_id, estado)
         return {"pago_id": pago_id, "estado_factura": estado, "saldo_pendiente": pendiente - monto}
 
+    def registrar_pago_empresa(self, sesion: SesionActiva, empresa_id: int, monto: Decimal,
+                             medio_pago: str, fecha: date | None = None) -> dict:
+        requerir_nivel(sesion, NIVEL_OPERADOR)
+        if medio_pago not in MEDIOS_DE_PAGO:
+            raise ErrorNegocio(f"Medio de pago inválido: {medio_pago}")
+        fecha = fecha or reglas.ahora_utc().date()
+        self._validar_periodo_abierto(fecha)
+        if not isinstance(monto, Decimal) or not monto.is_finite() or monto <= 0 or monto.as_tuple().exponent < -2:
+            raise ErrorNegocio("El monto debe ser positivo y tener hasta dos decimales")
+        with self._rel.transaccion():
+            cuenta = self._rel.bloquear_cuenta_empresa(empresa_id)
+            if cuenta["tipo_empresa"] not in ("OPERADOR", "PROVEEDOR"):
+                raise ErrorNegocio("La empresa no es un operador o proveedor")
+            deuda = -cuenta["saldo"]
+            if deuda <= 0:
+                raise ErrorNegocio("La empresa no tiene deuda pendiente de pago")
+            if monto > deuda:
+                raise ErrorNegocio(f"El pago supera la deuda pendiente: {deuda}")
+            self._rel.registrar_movimiento(
+                cuenta["id"], fecha, "DEBE", monto,
+                f"Pago a empresa {empresa_id} por {medio_pago}",
+            )
+        log.info("Pago a empresa %s por %s (%s)", empresa_id, monto, medio_pago)
+        return {"empresa_id": empresa_id, "monto": monto, "saldo_pendiente": deuda - monto}
+
     def listar_cuentas(self, sesion: SesionActiva) -> list[dict]:
         requerir_nivel(sesion, NIVEL_OPERADOR)
         return self._rel.listar_cuentas()

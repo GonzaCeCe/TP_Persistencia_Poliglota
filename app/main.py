@@ -587,6 +587,17 @@ def registrar_pago(app, sesion):
        f"pendiente {resultado['saldo_pendiente']}")
 
 
+def registrar_pago_empresa(app, sesion):
+    resultado = app.comercial.registrar_pago_empresa(
+        sesion,
+        pedir_entero("Id de empresa"),
+        pedir_decimal("Monto"),
+        elegir("Medio de pago", ("TRANSFERENCIA", "TARJETA", "CHEQUE", "EFECTIVO")),
+        pedir_fecha("Fecha del pago"),
+    )
+    ok(f"pago registrado; deuda pendiente {resultado['saldo_pendiente']}")
+
+
 def estado_de_cuenta(app, sesion):
     if sesion.cliente_id is not None:
         estado = app.comercial.estado_de_cuenta(sesion)
@@ -748,6 +759,7 @@ MENU = [
         Opcion("Solicitar reporte", NIVEL_CLIENTE, solicitar_reporte),
         Opcion("Estado de cuenta corriente", NIVEL_CLIENTE, estado_de_cuenta),
         Opcion("Registrar pago", NIVEL_OPERADOR, registrar_pago),
+        Opcion("Registrar pago a operador/proveedor", NIVEL_OPERADOR, registrar_pago_empresa),
     ]),
     Opcion("Consultas avanzadas y predicción", NIVEL_CLIENTE, [
         Opcion("Ruta completa de un envío (Neo4j)", NIVEL_CLIENTE, ruta_completa),

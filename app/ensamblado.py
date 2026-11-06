@@ -12,7 +12,7 @@ from app.servicios.comercial import ServicioComercial
 from app.servicios.mensajeria import ServicioMensajeria
 from app.servicios.monitoreo import ServicioMonitoreo
 from app.servicios.operativa import ServicioOperativa
-from app.servicios.prediccion import ClimaSinFuenteDeDatos, ServicioPrediccion
+from app.servicios.prediccion import ClimaHistorico, ServicioPrediccion
 from app.servicios.reportes import ServicioReportes
 from app.servicios.sincronizacion import ServicioSincronizacion
 from app.servicios.trazabilidad import ServicioTrazabilidad
@@ -48,6 +48,7 @@ def crear_aplicacion() -> Aplicacion:
 
     sincronizacion = ServicioSincronizacion(relacional, documental, grafo)
     trazabilidad = ServicioTrazabilidad(relacional, documental, grafo, sincronizacion)
+
     return Aplicacion(
         config=config,
         conexiones=conexiones,
@@ -58,6 +59,6 @@ def crear_aplicacion() -> Aplicacion:
         mensajeria=ServicioMensajeria(relacional, documental),
         comercial=ServicioComercial(relacional, documental, config.margen_facturacion),
         reportes=ServicioReportes(documental, grafo, config.directorio_salidas),
-        prediccion=ServicioPrediccion(documental, ClimaSinFuenteDeDatos()),
+        prediccion=ServicioPrediccion(documental, ClimaHistorico(documental)),
         sincronizacion=sincronizacion,
     )

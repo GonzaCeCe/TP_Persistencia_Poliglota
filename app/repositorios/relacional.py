@@ -135,6 +135,15 @@ class RepositorioRelacional:
             sql.SQL("SELECT * FROM cuenta_corriente WHERE {} = %s").format(sql.Identifier(titular)),
             (cliente_id if cliente_id is not None else empresa_id,))
 
+    def bloquear_cuenta_empresa(self, empresa_id: int) -> dict:
+        return self._uno_obligatorio(
+            f"Cuenta corriente de empresa {empresa_id}",
+            "SELECT cc.*, e.tipo AS tipo_empresa FROM cuenta_corriente cc "
+            "JOIN empresa e ON e.id = cc.empresa_id "
+            "WHERE cc.empresa_id = %s FOR UPDATE OF cc",
+            (empresa_id,),
+        )
+
     def listar_cuentas(self) -> list[dict]:
         return self._todos(
             "SELECT cc.*, COALESCE(c.razon_social, e.razon_social) AS titular, "

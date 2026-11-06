@@ -14,9 +14,49 @@ class ProveedorClima(Protocol):
         ...
 
 
-class ClimaSinFuenteDeDatos:
+class ClimaHistorico:
+    def __init__(self, documental: RepositorioDocumental):
+        self._doc = documental
+        self._riesgos = {}
+
+    def actualizar(self) -> None:
+        entregados_por_ruta = {}
+        afectados_por_ruta = {}
+
+        for envio in self._doc.todos_los_envios():
+            if envio["estado"] != "ENTREGADO":
+                continue
+
+            codigo_ruta = reglas.ruta(
+                envio["origen"]["codigo"],
+                envio["destino"]["codigo"]
+            )
+
+            entregados_por_ruta[codigo_ruta] = entregados_por_ruta.get(codigo_ruta, 0) + 1
+
+            incidentes = self._doc.incidentes_de_envio(envio["_id"])
+            tiene_incidente_climatico = any(
+                incidente["tipo"].upper() == "CLIMA"
+                for incidente in incidentes
+            )
+
+            if tiene_incidente_climatico:
+                afectados_por_ruta[codigo_ruta] = afectados_por_ruta.get(codigo_ruta, 0) + 1
+
+        self._riesgos = {
+            codigo_ruta: round(
+                afectados_por_ruta.get(codigo_ruta, 0) / cantidad,
+                4
+            )
+            for codigo_ruta, cantidad in entregados_por_ruta.items()
+        }
+
     def riesgo_climatico(self, envio: dict) -> float:
-        return 0.0
+        codigo_ruta = reglas.ruta(
+            envio["origen"]["codigo"],
+            envio["destino"]["codigo"]
+        )
+        return self._riesgos.get(codigo_ruta, 0.0)
 
 
 class ServicioPrediccion:
@@ -31,7 +71,12 @@ class ServicioPrediccion:
         demoras_por_ruta = self._doc.demoras_por_ruta()
         incidentes_abiertos = self._doc.incidentes_abiertos_por_envio()
         alertas_abiertas = self._doc.alertas_abiertas_por_contenedor()
+
+        if isinstance(self._clima, ClimaHistorico):
+            self._clima.actualizar()
+
         predicciones = []
+
         for envio in self._doc.envios_activos():
             ruta = reglas.ruta(envio["origen"]["codigo"], envio["destino"]["codigo"])
             entregados, tasa = demoras_por_ruta.get(ruta, (0, 0.0))
@@ -40,6 +85,7 @@ class ServicioPrediccion:
             operativo = reglas.riesgo_operativo(incidentes, alertas)
             climatico = self._clima.riesgo_climatico(envio)
             vencido = envio["fecha_entrega_estimada"] is not None and envio["fecha_entrega_estimada"] < momento
+
             prediccion = {
                 "envio_id": envio["_id"],
                 "dia": dia_texto,
@@ -47,13 +93,25 @@ class ServicioPrediccion:
                 "riesgo_climatico": climatico,
                 "riesgo_operativo": operativo,
                 "fecha_calculo": momento,
-                "factores": {"ruta": ruta, "envios_entregados_en_ruta": entregados,
-                             "tasa_demora_ruta": round(tasa, 4), "incidentes_abiertos": incidentes,
-                             "alertas_abiertas": alertas, "vencido": vencido},
+                "factores": {
+                    "ruta": ruta,
+                    "envios_entregados_en_ruta": entregados,
+                    "tasa_demora_ruta": round(tasa, 4),
+                    "incidentes_abiertos": incidentes,
+                    "alertas_abiertas": alertas,
+                    "vencido": vencido
+                },
             }
+
             self._doc.guardar_prediccion(prediccion)
             predicciones.append(prediccion)
-        log.info("Predicción diaria %s: %s envíos activos evaluados", dia_texto, len(predicciones))
+
+        log.info(
+            "Predicción diaria %s: %s envíos activos evaluados",
+            dia_texto,
+            len(predicciones)
+        )
+
         return predicciones
 
     def predicciones_de_envio(self, sesion: SesionActiva, envio_id: int) -> list[dict]:
@@ -62,4 +120,6 @@ class ServicioPrediccion:
 
     def predicciones_del_dia(self, sesion: SesionActiva, dia: date | None = None) -> list[dict]:
         requerir_nivel(sesion, NIVEL_OPERADOR)
-        return self._doc.predicciones_del_dia((dia or reglas.ahora_utc().date()).isoformat())
+        return self._doc.predicciones_del_dia(
+            (dia or reglas.ahora_utc().date()).isoformat()
+        )
